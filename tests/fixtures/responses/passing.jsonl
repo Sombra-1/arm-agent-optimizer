@@ -1,0 +1,6 @@
+{"task_id":"smoke-incident-001","text":"{\"category\":\"memory_leak\",\"severity\":\"high\",\"recommended_action\":\"operator_review\"}","request_succeeded":true,"timed_out":false,"status_code":200,"error":null}
+{"task_id":"smoke-recovery-001","text":"{\"action\":\"retry\",\"rationale\":\"The request is idempotent and retry budget remains.\"}","request_succeeded":true,"timed_out":false,"status_code":200,"error":null}
+{"task_id":"smoke-summary-001","text":"{\"root_cause\":\"dependency_failure\",\"evidence\":[\"cache:6379 refused three connections\"],\"uncertainty\":\"Cache host state is unknown.\",\"recommended_action\":\"retry\"}","request_succeeded":true,"timed_out":false,"status_code":200,"error":null}
+{"task_id":"smoke-contradiction-001","text":"{\"assessment\":\"unsupported\",\"reason\":\"Memory measurements provide insufficient evidence; the HTTP 401 indicates an authorization failure.\"}","request_succeeded":true,"timed_out":false,"status_code":200,"error":null}
+{"task_id":"smoke-planning-001","text":"{\"tool_calls\":[{\"tool\":\"inspect_metrics\",\"argument\":\"worker\"},{\"tool\":\"read_recent_logs\",\"argument\":\"worker\"}]}","request_succeeded":true,"timed_out":false,"status_code":200,"error":null}
+

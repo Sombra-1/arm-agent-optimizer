@@ -1,0 +1,1 @@
+/* AArchTune reports intentionally require no JavaScript. */

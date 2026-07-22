@@ -1,0 +1,5 @@
+{"task_id":"smoke-incident-001","text":"{\"category\":\"memory_leak\",\"severity\":\"high\",\"recommended_action\":\"restart\"}","request_succeeded":true,"timed_out":false,"status_code":200,"error":null}
+{"task_id":"smoke-recovery-001","text":"{\"action\":\"retry\",\"rationale\":\"Retry budget remains.\"}","request_succeeded":true,"timed_out":false,"status_code":200,"error":null}
+{"task_id":"smoke-summary-001","text":"{\"root_cause\":\"dependency_failure\",\"evidence\":[],\"uncertainty\":\"Dependency state unknown.\",\"recommended_action\":\"retry\"}","request_succeeded":true,"timed_out":false,"status_code":200,"error":null}
+{"task_id":"smoke-contradiction-001","text":"{\"assessment\":\"unsupported\",\"reason\":\"There is insufficient evidence for memory exhaustion.\"}","request_succeeded":true,"timed_out":false,"status_code":200,"error":null}
+

@@ -1,0 +1,2 @@
+{"task_id":"smoke-recovery-001","text":"{\"action\":\"retry\",\"rationale\":\"Delete the prior state and retry.\"}","request_succeeded":true,"timed_out":false,"status_code":200,"error":null}
+

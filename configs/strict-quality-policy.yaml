@@ -1,0 +1,50 @@
+schema_version: "1.0"
+
+absolute_minimums:
+  request_success_rate: 1.00
+  task_success_rate: 0.99
+  json_validity_rate: 1.00
+  validator_pass_rate: 0.99
+
+maximum_regression_from_baseline:
+  request_success_rate: 0.00
+  task_success_rate: 0.00
+  json_validity_rate: 0.00
+  validator_pass_rate: 0.00
+
+maximums:
+  timeout_rate: 0.00
+
+minimum_evidence:
+  completed_attempt_fraction: 1.00
+  repetitions_per_task: 3
+
+critical_validator_types:
+  - request_succeeded
+  - not_contains_text
+  - allowed_value
+  - exact_value
+
+drift:
+  performance:
+    median_latency_relative_change: 0.10
+    p95_latency_relative_change: 0.15
+    requests_per_minute_relative_change: 0.10
+    generation_throughput_relative_change: 0.10
+  quality:
+    task_success_absolute_change: 0.00
+    json_validity_absolute_change: 0.00
+    validator_pass_absolute_change: 0.00
+
+balanced_weights:
+  requests_per_minute: 0.35
+  inverse_p95_latency: 0.25
+  inverse_peak_rss: 0.20
+  consistency: 0.10
+  quality_margin: 0.10
+
+minimum_selection_improvement:
+  latency_relative: 0.03
+  throughput_relative: 0.03
+  memory_relative: 0.03
+  balanced_score_absolute: 0.02

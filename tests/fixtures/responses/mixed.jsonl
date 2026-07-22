@@ -1,0 +1,6 @@
+{"task_id":"smoke-incident-001","text":"{\"category\":\"unknown\",\"severity\":\"low\",\"recommended_action\":\"take_no_action\"}","request_succeeded":true,"timed_out":false,"status_code":200,"error":null}
+{"task_id":"smoke-recovery-001","text":"{\"action\":\"retry\",\"rationale\":\"A bounded retry is appropriate.\"}","request_succeeded":true,"timed_out":false,"status_code":200,"error":null}
+{"task_id":"smoke-summary-001","text":"{\"root_cause\":\"unknown\"}","request_succeeded":true,"timed_out":false,"status_code":200,"error":null}
+{"task_id":"smoke-contradiction-001","text":"{\"assessment\":\"unsupported\",\"reason\":\"There is insufficient evidence for memory exhaustion.\"}","request_succeeded":true,"timed_out":false,"status_code":200,"error":null}
+{"task_id":"smoke-planning-001","text":"{\"tool_calls\":[{\"tool\":\"run_shell\",\"argument\":\"worker\"}]}","request_succeeded":true,"timed_out":false,"status_code":200,"error":null}
+

@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AArchTune Optimization Report</title><style>$css</style></head>
+<body>$synthetic_banner<header class="hero"><p class="eyebrow">AArchTune</p><h1>$outcome_title</h1><p class="promise">Automatically selected a fast, reliable configuration for this recorded AI workload.</p><h2>$selected_candidate</h2><div class="metrics"><strong>$service_improvement service rate</strong><strong>$p95_improvement P95 latency</strong><strong>$memory_improvement peak memory</strong><strong>$quality_preserved</strong></div><p>Evaluation <code>$evaluation_id</code> · Passport <code>$passport_id</code></p></header>
+<main>
+<section id="selection"><h2>Selection outcome</h2><p>$outcome_title: <strong>$selected_candidate</strong></p></section>
+$rejected_card
+<section id="funnel"><h2>Candidate funnel</h2>$funnel_svg</section>
+<section id="comparison"><h2>Baseline versus selected and all candidates</h2><div class="chart"><h3>Sequential requests per minute</h3>$service_svg</div><div class="chart"><h3>P95 latency</h3>$latency_svg</div><div class="chart"><h3>Peak measured RSS</h3>$memory_svg</div></section>
+<section id="quality"><h2>Quality gate and candidate evidence</h2>$quality_distribution_svg<table><thead><tr><th>Candidate</th><th>Execution</th><th>Quality</th><th>Req/min</th><th>P95</th><th>Peak RSS</th><th>Task success</th><th>JSON validity</th></tr></thead><tbody>$candidate_rows</tbody></table><h3>Selected profile quality by category</h3><table><thead><tr><th>Category</th><th>Passed</th><th>Failed</th><th>Rate</th></tr></thead><tbody>$category_quality_rows</tbody></table><h3>Selected profile quality by validator</h3><table><thead><tr><th>Validator</th><th>Passed</th><th>Failed</th><th>Rate</th></tr></thead><tbody>$validator_quality_rows</tbody></table></section>
+<section id="pareto"><h2>Pareto frontier</h2>$pareto_svg<p>Only completed, comparable, quality-passing real-workload candidates with all core metrics are plotted.</p></section>
+<section id="drift"><h2>Baseline drift sentinel</h2><pre>$drift</pre></section>
+<section id="hardware"><h2>Hardware and Arm capabilities</h2><pre>$hardware</pre></section>
+<section id="runtime"><h2>Runtime and KleidiAI evidence</h2><pre>$runtime</pre></section>
+<section id="provenance"><h2>Model and workload provenance</h2><pre>$provenance</pre></section>
+<section id="settings"><h2>Exact selected settings</h2><table><tbody>$selected_settings</tbody></table></section>
+<section id="reproduction"><h2>Reproduction command</h2><pre>$reproduction</pre></section>
+<section id="methodology"><h2>Methodology</h2><p>$methodology</p></section>
+<section id="limitations"><h2>Limitations</h2><ul>$limitations</ul></section>
+<section id="integrity"><h2>Artifact integrity hashes</h2><table><thead><tr><th>Stage</th><th>Path</th><th>SHA-256</th></tr></thead><tbody>$hashes</tbody></table></section>
+</main><footer>Generated $generated_at · Self-contained report; no network requests or external assets.</footer></body></html>

@@ -1,0 +1,18 @@
+schema_version: "1.0"
+scenarios:
+  - id: prefill-small
+    prompt_tokens: 128
+    generation_tokens: 0
+    required: true
+  - id: prefill-medium
+    prompt_tokens: 512
+    generation_tokens: 0
+    required: true
+  - id: decode
+    prompt_tokens: 0
+    generation_tokens: 128
+    required: true
+  - id: mixed
+    prompt_tokens: 512
+    generation_tokens: 128
+    required: true

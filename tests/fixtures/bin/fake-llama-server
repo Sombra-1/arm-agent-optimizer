@@ -1,0 +1,417 @@
+#!/usr/bin/env python3
+"""Synthetic llama-server fixture. It is not llama.cpp and performs no inference."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import signal
+import sys
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any
+
+REQUEST_LOCK = threading.Lock()
+REQUEST_COUNT = 0
+SYNTHETIC_ALLOCATIONS: list[bytearray] = []
+SERVER_ARGUMENTS: argparse.Namespace | None = None
+
+HELP = """
+fake-llama-server (synthetic test fixture)
+  -m, --model <path>
+  --host <address>
+  --port <port>
+  --threads <count>
+  --threads-batch <count>
+  --batch-size <count>
+  --ubatch-size <count>
+  --ctx-size <count>
+  --parallel <count>
+  --metrics
+  --seed <seed>
+  --temp <temperature>
+  --no-mmap
+  --mmap
+  --numa <mode>
+  --cache-prompt
+  --log-file <path>
+  --model-cache <path>
+""".strip()
+
+
+def scenario() -> str:
+    return os.environ.get("FAKE_LLAMA_SCENARIO", "healthy")
+
+
+def emit_json(handler: BaseHTTPRequestHandler, status: int, payload: object) -> None:
+    encoded = json.dumps(payload, separators=(",", ":")).encode()
+    handler.send_response(status)
+    handler.send_header("Content-Type", "application/json")
+    handler.send_header("Content-Length", str(len(encoded)))
+    handler.end_headers()
+    handler.wfile.write(encoded)
+
+
+def healthy_content(payload: dict[str, Any]) -> str:
+    messages = payload.get("messages")
+    prompt = (
+        " ".join(
+            str(message.get("content", "")) for message in messages if isinstance(message, dict)
+        )
+        if isinstance(messages, list)
+        else ""
+    )
+    if "RSS rises steadily" in prompt or "RSS has increased continuously" in prompt:
+        return json.dumps(
+            {
+                "category": "memory_leak",
+                "severity": "high",
+                "recommended_action": "operator_review",
+            },
+            separators=(",", ":"),
+        )
+    if "metadata lookup timed out" in prompt or "metadata request timed out" in prompt:
+        return json.dumps(
+            {
+                "action": "retry",
+                "rationale": "The request is idempotent and retry budget remains.",
+            },
+            separators=(",", ":"),
+        )
+    if "connection to cache:6379 refused" in prompt:
+        return json.dumps(
+            {
+                "root_cause": "dependency_failure",
+                "evidence": ["cache:6379 refused three connections"],
+                "uncertainty": "Cache host state is unknown.",
+                "recommended_action": "retry",
+            },
+            separators=(",", ":"),
+        )
+    if "Claim: The job failed" in prompt:
+        return json.dumps(
+            {
+                "assessment": "unsupported",
+                "reason": (
+                    "Memory measurements provide insufficient evidence; "
+                    "the HTTP 401 indicates authorization failure."
+                ),
+            },
+            separators=(",", ":"),
+        )
+    if "Available tools: inspect_metrics" in prompt:
+        return json.dumps(
+            {
+                "tool_calls": [
+                    {"tool": "inspect_metrics", "argument": "worker"},
+                    {"tool": "read_recent_logs", "argument": "worker"},
+                ]
+            },
+            separators=(",", ":"),
+        )
+    return json.dumps({"status": "ok"}, separators=(",", ":"))
+
+
+def evaluation_label() -> str:
+    return os.environ.get("AARCHTUNE_EVALUATION_RUN_LABEL", "")
+
+
+def profile_delay(active: str) -> float:
+    arguments = SERVER_ARGUMENTS
+    threads = int(arguments.threads) if arguments and arguments.threads else 0
+    label = evaluation_label()
+    if active == "baseline-remains-best":
+        return 0.008 if "baseline" in label else 0.020
+    base = {16: 0.006, 12: 0.009, 8: 0.013, 4: 0.018, 1: 0.024}.get(threads, 0.020)
+    if arguments and arguments.cache_prompt:
+        base = 0.014
+    if active == "slow-valid":
+        base += 0.020
+    if active == "baseline-drift-latency" and label == "baseline-end":
+        base += 0.040
+    return base
+
+
+def evaluation_quality_failure(active: str, request_number: int) -> bool:
+    arguments = SERVER_ARGUMENTS
+    threads = int(arguments.threads) if arguments and arguments.threads else 0
+    label = evaluation_label()
+    if active == "fast-quality-regression" and threads == 16:
+        return True
+    if active == "all-candidates-quality-fail" and label.startswith("candidate-"):
+        return True
+    if active == "baseline-drift-quality" and label == "baseline-end":
+        return True
+    return (
+        active == "candidate-inconsistent-quality"
+        and label.startswith("candidate-")
+        and request_number % 2 == 0
+    )
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "fake-llama-server"
+
+    def log_message(self, format_string: str, *args: object) -> None:
+        print(f"http: {format_string % args}", file=sys.stderr, flush=True)
+
+    def do_GET(self) -> None:
+        if scenario() == "no-readiness" and self.path in {"/health", "/v1/models"}:
+            emit_json(self, 503, {"error": "synthetic not ready"})
+        elif self.path == "/health":
+            emit_json(self, 200, {"status": "ok"})
+        elif self.path == "/v1/models":
+            emit_json(self, 200, {"data": [{"id": "synthetic-fixture"}]})
+        elif self.path == "/metrics":
+            content = b"fake_requests_total 1\n"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(content)))
+            self.end_headers()
+            self.wfile.write(content)
+        else:
+            emit_json(self, 404, {"error": "not found"})
+
+    def do_POST(self) -> None:
+        global REQUEST_COUNT
+        if self.path != "/v1/chat/completions":
+            emit_json(self, 404, {"error": "not found"})
+            return
+        length = int(self.headers.get("Content-Length", "0"))
+        try:
+            payload = json.loads(self.rfile.read(length))
+        except (ValueError, TypeError):
+            emit_json(self, 400, {"error": "invalid request JSON"})
+            return
+        request_file = os.environ.get("FAKE_LLAMA_REQUEST_FILE")
+        if request_file:
+            Path(request_file).write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+        active = scenario()
+        with REQUEST_LOCK:
+            REQUEST_COUNT += 1
+            request_number = REQUEST_COUNT
+        if active == "server-exits-mid-run":
+            exit_after = int(os.environ.get("FAKE_LLAMA_EXIT_AFTER", "2"))
+            if request_number > exit_after:
+                print("synthetic mid-run process exit", file=sys.stderr, flush=True)
+                os._exit(9)
+        if active == "slow-request":
+            time.sleep(float(os.environ.get("FAKE_LLAMA_DELAY", "1.0")))
+        messages = payload.get("messages", [])
+        prompt = " ".join(
+            str(message.get("content", "")) for message in messages if isinstance(message, dict)
+        )
+        evaluation_scenarios = {
+            "profile-matrix",
+            "fast-valid",
+            "fast-quality-regression",
+            "slow-valid",
+            "memory-heavy",
+            "candidate-startup-failure",
+            "candidate-timeout",
+            "candidate-http-failure",
+            "candidate-malformed-json",
+            "candidate-inconsistent-quality",
+            "baseline-drift-latency",
+            "baseline-drift-quality",
+            "baseline-end-failure",
+            "all-candidates-quality-fail",
+            "baseline-remains-best",
+        }
+        if active in evaluation_scenarios:
+            label = evaluation_label()
+            if active == "candidate-timeout" and label.startswith("candidate-"):
+                time.sleep(float(os.environ.get("FAKE_LLAMA_DELAY", "1.0")))
+            else:
+                time.sleep(profile_delay(active))
+            if active == "candidate-http-failure" and label.startswith("candidate-"):
+                emit_json(self, 500, {"error": "synthetic candidate HTTP failure"})
+                return
+        if active == "http-500" or (
+            active == "partial-http-failure"
+            and ("metadata request timed out" in prompt or "metadata lookup timed out" in prompt)
+        ):
+            emit_json(self, 500, {"error": "synthetic server failure"})
+            return
+        if active == "invalid-json":
+            content = b"not-json"
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(content)))
+            self.end_headers()
+            self.wfile.write(content)
+            return
+        if active == "missing-content":
+            emit_json(self, 200, {"choices": [{"message": {}}]})
+            return
+        if evaluation_quality_failure(active, request_number):
+            content = "not-json"
+        elif active == "candidate-malformed-json" and evaluation_label().startswith("candidate-"):
+            content = "{malformed"
+        elif active == "large-response":
+            content = "x" * (2 * 1024 * 1024)
+        elif active == "echo-request":
+            content = json.dumps(payload, sort_keys=True)
+        elif active == "mixed-task-quality" and (
+            "RSS rises steadily" in prompt or "RSS has increased continuously" in prompt
+        ):
+            content = json.dumps(
+                {"category": "unknown", "severity": "low", "recommended_action": "retry"},
+                separators=(",", ":"),
+            )
+        else:
+            content = healthy_content(payload)
+        response: dict[str, Any] = {"choices": [{"message": {"content": content}}]}
+        if active in {"healthy-with-timings", "malformed-timings"} | evaluation_scenarios:
+            response["usage"] = {
+                "prompt_tokens": 20,
+                "completion_tokens": 8,
+                "total_tokens": 28,
+            }
+            response["timings"] = (
+                {
+                    "prompt_n": 20,
+                    "prompt_ms": 10.0,
+                    "prompt_per_second": 2000.0,
+                    "predicted_n": 8,
+                    "predicted_ms": 16.0,
+                    "predicted_per_second": 500.0,
+                }
+                if active != "malformed-timings"
+                else {
+                    "prompt_n": "twenty",
+                    "prompt_ms": -10.0,
+                    "prompt_per_second": "fast",
+                    "predicted_n": 8.5,
+                    "predicted_ms": "NaN",
+                    "predicted_per_second": -1.0,
+                }
+            )
+        elif active == "healthy-without-timings":
+            response["usage"] = {
+                "prompt_tokens": 20,
+                "completion_tokens": 8,
+                "total_tokens": 28,
+            }
+        if active == "process-memory-growth":
+            SYNTHETIC_ALLOCATIONS.append(bytearray(512 * 1024))
+        emit_json(self, 200, response)
+
+
+def parse_arguments() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--model", required=True)
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, required=True)
+    parser.add_argument("--threads")
+    parser.add_argument("--threads-batch")
+    parser.add_argument("--batch-size")
+    parser.add_argument("--ubatch-size")
+    parser.add_argument("--ctx-size")
+    parser.add_argument("--parallel")
+    parser.add_argument("--metrics", action="store_true")
+    parser.add_argument("--no-mmap", action="store_true")
+    parser.add_argument("--mmap", action="store_true")
+    parser.add_argument("--numa")
+    parser.add_argument("--cache-prompt", action="store_true")
+    return parser.parse_args()
+
+
+def main() -> int:
+    global SERVER_ARGUMENTS
+    active = scenario()
+    if "--version" in sys.argv[1:]:
+        if active == "version-timeout":
+            time.sleep(float(os.environ.get("FAKE_LLAMA_DELAY", "2.0")))
+        print("fake-llama-server 1.0 (synthetic)")
+        return 0
+    if "--help" in sys.argv[1:]:
+        if active == "help-failure":
+            print("synthetic help failure", file=sys.stderr)
+            return 2
+        print(HELP)
+        return 0
+    arguments = parse_arguments()
+    SERVER_ARGUMENTS = arguments
+    if active == "early-exit":
+        print("synthetic early exit", file=sys.stderr, flush=True)
+        return 3
+    if active == "startup-failure":
+        print("synthetic startup failure", file=sys.stderr, flush=True)
+        return 4
+    label = evaluation_label()
+    if active == "candidate-startup-failure" and label.startswith("candidate-"):
+        print("synthetic candidate startup failure", file=sys.stderr, flush=True)
+        return 6
+    if active == "baseline-end-failure" and label == "baseline-end":
+        print("synthetic baseline-end startup failure", file=sys.stderr, flush=True)
+        return 7
+    if active == "startup-delay":
+        delay = float(os.environ.get("FAKE_LLAMA_DELAY", "0.4"))
+        print(f"synthetic startup delay {delay}", file=sys.stderr, flush=True)
+        time.sleep(delay)
+    if active == "kleidiai-positive":
+        print("backend: KleidiAI enabled", file=sys.stderr, flush=True)
+    elif active == "kleidiai-negative":
+        print("KleidiAI: disabled", file=sys.stderr, flush=True)
+    elif active == "kleidiai-ambiguous":
+        print("KleidiAI build setting was inspected", file=sys.stderr, flush=True)
+    elif active == "secret-log":
+        print(f"startup API_TOKEN={os.environ.get('API_TOKEN', '')}", file=sys.stderr, flush=True)
+    if active == "log-flood":
+        for index in range(400):
+            print(f"synthetic log line {index:04d} {'x' * 80}", file=sys.stderr)
+        print("useful diagnostic tail", file=sys.stderr, flush=True)
+    pid_file = os.environ.get("FAKE_LLAMA_PID_FILE")
+    if pid_file:
+        Path(pid_file).write_text(str(os.getpid()), encoding="utf-8")
+    if active == "ignore-term":
+        signal.signal(signal.SIGTERM, lambda _signum, _frame: None)
+    else:
+
+        def terminate(_signum: int, _frame: object) -> None:
+            raise KeyboardInterrupt
+
+        signal.signal(signal.SIGTERM, terminate)
+    if active in {
+        "profile-matrix",
+        "fast-valid",
+        "fast-quality-regression",
+        "slow-valid",
+        "memory-heavy",
+        "candidate-startup-failure",
+        "candidate-timeout",
+        "candidate-http-failure",
+        "candidate-malformed-json",
+        "candidate-inconsistent-quality",
+        "baseline-drift-latency",
+        "baseline-drift-quality",
+        "baseline-end-failure",
+        "all-candidates-quality-fail",
+        "baseline-remains-best",
+    }:
+        threads = int(arguments.threads) if arguments.threads else 0
+        allocation_mib = {16: 3, 12: 4, 8: 2, 4: 2, 1: 1}.get(threads, 5)
+        if active == "memory-heavy" and label.startswith("candidate-"):
+            allocation_mib += 16
+        SYNTHETIC_ALLOCATIONS.append(bytearray(allocation_mib * 1024 * 1024))
+    try:
+        server = ThreadingHTTPServer((arguments.host, arguments.port), Handler)
+    except OSError as exc:
+        print(f"synthetic bind failure: {exc}", file=sys.stderr, flush=True)
+        return 5
+    print(f"synthetic server ready on {arguments.host}:{arguments.port}", flush=True)
+    try:
+        server.serve_forever(poll_interval=0.05)
+    except KeyboardInterrupt:
+        print("synthetic graceful shutdown", file=sys.stderr, flush=True)
+    finally:
+        server.server_close()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

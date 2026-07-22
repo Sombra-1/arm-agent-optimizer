@@ -1,0 +1,2 @@
+{"task_id":"smoke-planning-001","text":"{\"tool_calls\":[{\"tool\":\"run_shell\",\"argument\":\"inspect worker\"}]}","request_succeeded":true,"timed_out":false,"status_code":200,"error":null}
+

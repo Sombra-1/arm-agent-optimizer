@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+"""Synthetic llama-bench fixture; its deterministic formula models no real hardware."""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import os
+import signal
+import sys
+import time
+from pathlib import Path
+
+HELP = """
+fake-llama-bench (synthetic fixture)
+  -m, --model <path>
+  -t, --threads <count>
+  -tb, --threads-batch <count>
+  -b, --batch-size <count>
+  -ub, --ubatch-size <count>
+  -p, --prompt-tokens <count>
+  -n, --generation-tokens <count>
+  -r, --repetitions <count>
+  -o, --output <jsonl|json|csv>
+  --mmap
+  --no-mmap
+  --numa <mode>
+  --cpu-mask <mask>
+  -v, --verbose
+""".strip()
+
+
+def scenario() -> str:
+    return os.environ.get("FAKE_LLAMA_BENCH_SCENARIO", "healthy-jsonl")
+
+
+def help_text() -> str:
+    """Expose one output format in format-specific fixture scenarios."""
+    active = scenario()
+    if active == "healthy-json":
+        return HELP.replace("<jsonl|json|csv>", "<json>")
+    if active == "healthy-csv":
+        return HELP.replace("<jsonl|json|csv>", "<csv>")
+    return HELP
+
+
+def arguments() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("-m", "--model", required=True)
+    parser.add_argument("-t", "--threads", type=int, default=1)
+    parser.add_argument("-tb", "--threads-batch", type=int)
+    parser.add_argument("-b", "--batch-size", type=int, default=512)
+    parser.add_argument("-ub", "--ubatch-size", type=int, default=128)
+    parser.add_argument("-p", "--prompt-tokens", type=int, default=0)
+    parser.add_argument("-n", "--generation-tokens", type=int, default=0)
+    parser.add_argument("-r", "--repetitions", type=int, default=1)
+    parser.add_argument("-o", "--output", choices=("jsonl", "json", "csv"), default="jsonl")
+    parser.add_argument("--mmap", action="store_true")
+    parser.add_argument("--no-mmap", action="store_true")
+    parser.add_argument("--numa", default="disabled")
+    return parser.parse_args()
+
+
+def measurement(args: argparse.Namespace) -> dict[str, object]:
+    # Synthetic-only formula: thread term plus a small bounded batch term and phase multiplier.
+    phase = 3.0 if args.prompt_tokens and not args.generation_tokens else 1.0
+    if args.prompt_tokens and args.generation_tokens:
+        phase = 1.5
+    batch_term = min(args.batch_size, 2048) / 256
+    throughput = (args.threads * 10.0 + batch_term) * phase
+    if scenario() == "unstable":
+        repetition = int(os.environ.get("AARCHTUNE_SCREEN_REPETITION", "1"))
+        throughput *= (0.55, 1.0, 1.45)[(repetition - 1) % 3]
+    reported_threads = args.threads + 1 if scenario() == "settings-mismatch" else args.threads
+    row: dict[str, object] = {
+        "synthetic_fixture": True,
+        "n_prompt": args.prompt_tokens,
+        "n_gen": args.generation_tokens,
+        "n_threads": reported_threads,
+        "n_threads_batch": args.threads_batch or args.threads,
+        "n_batch": args.batch_size,
+        "n_ubatch": args.ubatch_size,
+        "test": f"pp{args.prompt_tokens}+tg{args.generation_tokens}",
+        "avg_ts": round(throughput, 6),
+        "stddev_ts": 0.0,
+        "test_time_seconds": 0.01,
+        "model_size": Path(args.model).stat().st_size,
+        "model_n_params": 1,
+        "backend": "synthetic-fixture",
+        "commit": "synthetic",
+        "build": 1,
+    }
+    if scenario() == "missing-throughput":
+        row.pop("avg_ts")
+    return row
+
+
+def emit(rows: list[dict[str, object]], output_format: str) -> None:
+    active = scenario()
+    if active == "healthy-json":
+        selected = "json"
+    elif active == "healthy-csv":
+        selected = "csv"
+    else:
+        selected = output_format
+    if selected == "jsonl":
+        for row in rows:
+            print(json.dumps(row, sort_keys=True, separators=(",", ":")))
+    elif selected == "json":
+        print(json.dumps({"results": rows}, sort_keys=True, separators=(",", ":")))
+    else:
+        writer = csv.DictWriter(sys.stdout, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def main() -> int:
+    active = scenario()
+    if "--version" in sys.argv[1:]:
+        if active == "version-timeout":
+            time.sleep(float(os.environ.get("FAKE_LLAMA_BENCH_DELAY", "2")))
+        print("fake-llama-bench 1.0 (synthetic)")
+        return 0
+    if "--help" in sys.argv[1:]:
+        if active == "help-failure":
+            print("synthetic help failure", file=sys.stderr)
+            return 2
+        print(help_text())
+        return 0
+    args = arguments()
+    pid_path = os.environ.get("FAKE_LLAMA_BENCH_PID_FILE")
+    if pid_path:
+        Path(pid_path).write_text(str(os.getpid()), encoding="utf-8")
+    if active == "nonzero-exit":
+        print("synthetic benchmark failure", file=sys.stderr)
+        return 7
+    if active == "partial-failure" and args.threads >= 12 and args.prompt_tokens == 512:
+        print("synthetic selected signature/scenario failure", file=sys.stderr)
+        return 8
+    if active in {"timeout", "ignore-term"}:
+        if active == "ignore-term":
+            signal.signal(signal.SIGTERM, lambda _signal, _frame: None)
+        time.sleep(float(os.environ.get("FAKE_LLAMA_BENCH_DELAY", "10")))
+    if active == "memory-growth":
+        allocation = bytearray(32 * 1024 * 1024)
+        allocation[0] = 1
+        time.sleep(0.2)
+    if active == "log-flood":
+        for index in range(2000):
+            print(f"synthetic log {index:04d} {'x' * 100}", file=sys.stderr)
+    if active == "malformed-output":
+        print("{not machine readable")
+        return 0
+    rows = [measurement(args)]
+    if active == "partial-rows":
+        rows.append({"synthetic_fixture": True, "n_threads": args.threads})
+    emit(rows, args.output)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
