@@ -11,8 +11,9 @@ dist/
 hardware-report.json
 results/
 *.gguf
-!tests/fixtures/models/fake-model.gguf
 models/
+!tests/fixtures/models/
+!tests/fixtures/models/fake-model.gguf
 reports/
 cmake-build-*/
 build-*/

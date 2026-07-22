@@ -1,0 +1,4 @@
+SYNTHETIC TEST FIXTURE — THIS IS NOT A REAL GGUF MODEL.
+
+It contains no model weights and is used only to test safe path and command handling.
+
