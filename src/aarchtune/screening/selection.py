@@ -123,7 +123,10 @@ def score_signatures(
                     available=True,
                 )
             )
-        updated.append(result.model_copy(update={"score": score, "score_components": components}))
+        bounded_score = min(1.0, max(0.0, score))
+        updated.append(
+            result.model_copy(update={"score": bounded_score, "score_components": components})
+        )
     return updated
 
 
