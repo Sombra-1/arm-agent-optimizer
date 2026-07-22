@@ -135,7 +135,7 @@ def main() -> int:
     if active == "nonzero-exit":
         print("synthetic benchmark failure", file=sys.stderr)
         return 7
-    if active == "partial-failure" and args.threads >= 12 and args.prompt_tokens == 512:
+    if active == "partial-failure" and args.batch_size >= 1024 and args.prompt_tokens == 512:
         print("synthetic selected signature/scenario failure", file=sys.stderr)
         return 8
     if active in {"timeout", "ignore-term"}:
