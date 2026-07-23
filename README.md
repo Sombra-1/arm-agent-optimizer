@@ -2,6 +2,10 @@
 
 **AArchTune automatically finds a fast, reliable `llama.cpp` configuration for a real AI workload on an Arm64 machine.**
 
+**Challenge track: Cloud AI**
+
+AArchTune targets Arm-powered cloud and server platforms by optimizing CPU inference configurations for `llama.cpp` workloads on Linux AArch64.
+
 AArchTune is a local-first, quality-constrained inference autotuner. Give it a readable GGUF model, a representative JSONL workload, `llama-server`, and `llama-bench`; it measures one reproducible baseline, plans a bounded hardware-aware search, screens low-level signatures, evaluates advanced profiles through the real workload, rejects correctness regressions, and produces an auditable deployment bundle.
 
 > Results are specific to the recorded hardware, model, workload, runtime binaries, generation settings, and quality policy. Synthetic fixtures are tests—not Arm performance evidence.
@@ -84,6 +88,22 @@ The Passport binds the selection to hardware, binaries, model, workload, policie
 
 `report.html` is self-contained: embedded CSS, inline accessible SVG, no CDNs, no external fonts, no network requests, and no raw model responses. It highlights selection, the fastest quality-rejected profile when applicable, candidate funnel, comparisons, Pareto evidence, drift, provenance, and limitations. See [final report](docs/final-report.md).
 
+## Submission preview
+
+The screenshots below demonstrate the product workflow. Performance screenshots currently use clearly labelled synthetic fixtures and are not Arm64 benchmark evidence.
+
+### Quality-constrained selection
+
+![Synthetic AArchTune report showing the fastest configuration rejected for quality regression](docs/screenshots/05-fastest-candidate-rejected.png)
+
+### Candidate funnel and evidence
+
+![Synthetic AArchTune candidate funnel and Pareto evidence](docs/screenshots/06-synthetic-funnel-pareto.png)
+
+### Public validation
+
+![AArchTune GitHub Actions CI passing](docs/screenshots/03-ci-passing.png)
+
 ## Reproducibility
 
 Every stage records exact hashes and typed configuration. Warm-ups are excluded from measured statistics. Candidate order is deterministic. An ending baseline sentinel detects substantial temporal drift. See [benchmark methodology](docs/benchmark-methodology.md).
@@ -112,6 +132,10 @@ Tests run on x86 with clearly labelled synthetic fixtures and never require mode
 ## Hackathon context
 
 AArchTune is an original open-source hackathon project focused on Arm-aware, quality-preserving GGUF inference tuning. Submission guidance and evidence mapping live in [Devpost draft](docs/devpost-submission.md) and [judging map](docs/judging-map.md). Real performance placeholders must be replaced only after following the Arm64 runbook.
+
+## Challenge-period development
+
+AArchTune was created and substantially implemented during the Arm AI Optimization Challenge period. The initial validated public MVP was published on July 22, 2026, and the repository history records the implementation, testing, release validation, and publication fixes completed during the challenge.
 
 ## License
 

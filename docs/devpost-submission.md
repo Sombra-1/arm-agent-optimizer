@@ -1,5 +1,11 @@
 # Devpost submission draft
 
+## Challenge track
+
+**Cloud AI**
+
+AArchTune improves AI inference on Arm-powered cloud and server systems by finding a fast, memory-aware, and quality-preserving `llama.cpp` runtime configuration for a representative application workload.
+
 ## Project overview
 
 AArchTune is a local, open-source autotuner that selects a fast `llama.cpp` CPU configuration without accepting measured regressions in a representative AI workload.
@@ -28,6 +34,19 @@ One command runs the pipeline; native stage commands remain available for debugg
 
 See `README.md` and `docs/real-arm-validation-runbook.md`. Tests use small synthetic fixtures without models or Arm claims.
 
+## Challenge-period confirmation
+
+AArchTune was created and substantially implemented during the Arm AI Optimization Challenge period. The initial validated public MVP was published on July 22, 2026. The public Git history records the implementation and the narrowly scoped release-validation fixes completed before submission.
+
+## Suggested submission screenshots
+
+1. `docs/screenshots/01-project-overview-cloud-ai.png` — project overview and Cloud AI track.
+2. `docs/screenshots/03-ci-passing.png` — public CI validation.
+3. `docs/screenshots/05-fastest-candidate-rejected.png` — synthetic demonstration of quality-constrained rejection.
+4. `docs/screenshots/06-synthetic-funnel-pareto.png` — synthetic candidate funnel and Pareto evidence.
+
+The performance screenshots are synthetic behavioral demonstrations and must be replaced or supplemented with validated real Arm64 screenshots before making quantitative Arm-performance claims.
+
 ## Real results
 
 - Service-rate improvement: **[INSERT REAL ARM64 RESULT]**
@@ -46,4 +65,4 @@ Linux CPU-only v1, sequential workload service rate, non-streaming TTFT unavaila
 
 ## License and repository
 
-MIT. Repository: **[INSERT PUBLIC REPOSITORY LINK]**
+MIT. Repository: https://github.com/Sombra-1/arm-agent-optimizer

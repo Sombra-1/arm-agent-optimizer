@@ -1,5 +1,9 @@
 # Judging evidence map
 
+**Challenge track: Cloud AI**
+
+AArchTune targets Arm64 cloud/server CPU inference and improves both the optimization workflow and the reliability of the selected deployment configuration.
+
 | Criterion | Evidence |
 |---|---|
 | Technical implementation | Version-aware flag inspection, bounded planning/screening, isolated server lifecycle, real validators, process metrics, drift sentinel, Pareto analysis, canonical Passport hashes |
