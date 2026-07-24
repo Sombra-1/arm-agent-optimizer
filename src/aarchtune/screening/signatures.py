@@ -69,11 +69,21 @@ def build_signatures(
         for field, value in runtime_data.items():
             if field in _SCREENABLE:
                 capability_name = _SCREENABLE[field]
-                supported = capabilities.mappings[capability_name].supported
+                capability = capabilities.mappings[capability_name]
+                supported = (
+                    capability.represents_boolean(value)
+                    if field == "mmap" and isinstance(value, bool)
+                    else capability.supported
+                )
                 reason = (
-                    "Mapped through an option token observed in llama-bench help"
+                    "Mapped through a value form observed in llama-bench help"
                     if supported
-                    else "Planned value cannot be represented by this llama-bench"
+                    else (
+                        f"Planned Boolean value cannot be represented by "
+                        f"llama-bench form {capability.boolean_form.value}"
+                        if field == "mmap" and capability.boolean_form is not None
+                        else "Planned value cannot be represented by this llama-bench"
+                    )
                 )
                 mapping = CandidateFieldMapping(
                     field=field,

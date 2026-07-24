@@ -14,6 +14,7 @@ from aarchtune.optimization.models import SearchPlan
 from aarchtune.runtime.capabilities import ProbeResult
 from aarchtune.screening.errors import BenchCapabilityError, BenchDiscoveryError
 from aarchtune.screening.models import (
+    BooleanOptionForm,
     CapabilityMapping,
     LlamaBenchCapabilities,
     OutputFormat,
@@ -141,13 +142,53 @@ def parse_option_tokens(help_text: str) -> set[str]:
     return set(_TOKEN.findall(help_text))
 
 
-def _mapping(name: str, tokens: set[str]) -> CapabilityMapping:
+def _has_numeric_boolean_form(help_text: str, flag: str) -> bool:
+    flag_pattern = rf"(?<![A-Za-z0-9_-]){re.escape(flag)}(?=$|[\s=,\[<])"
+    value_pattern = r"<\s*0\s*\|\s*1\s*>"
+    return any(
+        re.search(flag_pattern, line) and re.search(value_pattern, line)
+        for line in help_text.splitlines()
+    )
+
+
+def _boolean_form(
+    help_text: str,
+    aliases: list[str],
+    *,
+    positive_flag: str,
+    negative_flag: str,
+) -> BooleanOptionForm:
+    if positive_flag in aliases and _has_numeric_boolean_form(help_text, positive_flag):
+        return BooleanOptionForm.NUMERIC_01
+    if positive_flag in aliases and negative_flag in aliases:
+        return BooleanOptionForm.PAIRED_SWITCHES
+    if positive_flag in aliases:
+        return BooleanOptionForm.TRUE_ONLY
+    return BooleanOptionForm.UNSUPPORTED
+
+
+def _mapping(name: str, tokens: set[str], help_text: str) -> CapabilityMapping:
     observed = [alias for alias in _ALIASES[name] if alias in tokens]
+    boolean_form = (
+        _boolean_form(
+            help_text,
+            observed,
+            positive_flag="--mmap",
+            negative_flag="--no-mmap",
+        )
+        if name == "mmap"
+        else None
+    )
     return CapabilityMapping(
         logical_parameter=name,
-        supported=bool(observed),
+        supported=(
+            boolean_form is not BooleanOptionForm.UNSUPPORTED
+            if boolean_form is not None
+            else bool(observed)
+        ),
         selected_flag=observed[0] if observed else None,
         aliases_observed=observed,
+        boolean_form=boolean_form,
     )
 
 
@@ -193,7 +234,7 @@ def inspect_llama_bench(
         raise BenchCapabilityError(help_probe.error or "llama-bench --help probe failed")
     help_text = f"{help_probe.stdout or ''}\n{help_probe.stderr or ''}"
     tokens = parse_option_tokens(help_text)
-    mappings = {name: _mapping(name, tokens) for name in _ALIASES}
+    mappings = {name: _mapping(name, tokens, help_text) for name in _ALIASES}
     supported_formats = _formats(help_text, mappings["output_format"])
     if not mappings["model_path"].supported:
         raise BenchCapabilityError("llama-bench help exposes no supported model-path flag")

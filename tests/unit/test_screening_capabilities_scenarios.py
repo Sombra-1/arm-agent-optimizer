@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -12,7 +13,11 @@ from aarchtune.screening.capabilities import (
     resolve_llama_bench_binary,
 )
 from aarchtune.screening.errors import BenchCapabilityError, BenchDiscoveryError, ScenarioError
-from aarchtune.screening.models import LlamaBenchCapabilities, OutputFormat
+from aarchtune.screening.models import (
+    BooleanOptionForm,
+    LlamaBenchCapabilities,
+    OutputFormat,
+)
 from aarchtune.screening.scenarios import load_scenarios
 
 
@@ -53,6 +58,71 @@ def test_version_help_formats_and_complete_tokens(
     assert {"-tb", "--threads-batch"} <= set(
         bench_capabilities.mappings["threads_batch"].aliases_observed
     )
+    assert bench_capabilities.mappings["mmap"].boolean_form is BooleanOptionForm.NUMERIC_01
+    assert bench_capabilities.mappings["mmap"].represents_boolean(True)
+    assert bench_capabilities.mappings["mmap"].represents_boolean(False)
+
+
+@pytest.mark.parametrize(
+    ("mmap_help", "expected_form", "true_supported", "false_supported"),
+    [
+        ("--mmap <0|1>", BooleanOptionForm.NUMERIC_01, True, True),
+        ("--mmap\n--no-mmap", BooleanOptionForm.PAIRED_SWITCHES, True, True),
+        ("--mmap", BooleanOptionForm.TRUE_ONLY, True, False),
+        ("", BooleanOptionForm.UNSUPPORTED, False, False),
+    ],
+)
+def test_mmap_boolean_form_is_preserved_from_help(
+    tmp_path: Path,
+    mmap_help: str,
+    expected_form: BooleanOptionForm,
+    true_supported: bool,
+    false_supported: bool,
+) -> None:
+    binary = tmp_path / "llama-bench"
+    binary.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = --version ]; then echo 'llama-bench test'; exit 0; fi\n"
+        'if [ "$1" = --help ]; then\n'
+        f"  printf '%s\\n' '-m, --model <path>' '-o, --output <jsonl>' '{mmap_help}'\n"
+        "  exit 0\n"
+        "fi\n",
+        encoding="utf-8",
+    )
+    binary.chmod(0o755)
+
+    mapping = inspect_llama_bench(binary, use_cache=False).mappings["mmap"]
+
+    assert mapping.boolean_form is expected_form
+    assert mapping.represents_boolean(True) is true_supported
+    assert mapping.represents_boolean(False) is false_supported
+
+
+def test_fake_bench_requires_numeric_mmap_value(
+    fake_bench: Path,
+    fake_model: Path,
+) -> None:
+    base = [
+        str(fake_bench),
+        "--model",
+        str(fake_model),
+        "--generation-tokens",
+        "1",
+        "--output",
+        "jsonl",
+        "--mmap",
+    ]
+    disabled = subprocess.run([*base, "0"], capture_output=True, text=True, check=False)
+    enabled = subprocess.run([*base, "1"], capture_output=True, text=True, check=False)
+    missing = subprocess.run(base, capture_output=True, text=True, check=False)
+    invalid = subprocess.run([*base, "2"], capture_output=True, text=True, check=False)
+
+    assert disabled.returncode == 0
+    assert '"mmap":false' in disabled.stdout
+    assert enabled.returncode == 0
+    assert '"mmap":true' in enabled.stdout
+    assert missing.returncode != 0
+    assert invalid.returncode != 0
 
 
 def test_option_parser_prevents_substring_false_positives() -> None:

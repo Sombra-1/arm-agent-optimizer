@@ -23,8 +23,7 @@ fake-llama-bench (synthetic fixture)
   -n, --generation-tokens <count>
   -r, --repetitions <count>
   -o, --output <jsonl|json|csv>
-  --mmap
-  --no-mmap
+  --mmap <0|1>
   --numa <mode>
   --cpu-mask <mask>
   -v, --verbose
@@ -56,8 +55,7 @@ def arguments() -> argparse.Namespace:
     parser.add_argument("-n", "--generation-tokens", type=int, default=0)
     parser.add_argument("-r", "--repetitions", type=int, default=1)
     parser.add_argument("-o", "--output", choices=("jsonl", "json", "csv"), default="jsonl")
-    parser.add_argument("--mmap", action="store_true")
-    parser.add_argument("--no-mmap", action="store_true")
+    parser.add_argument("--mmap", type=int, choices=(0, 1), default=1)
     parser.add_argument("--numa", default="disabled")
     return parser.parse_args()
 
@@ -81,6 +79,7 @@ def measurement(args: argparse.Namespace) -> dict[str, object]:
         "n_threads_batch": args.threads_batch or args.threads,
         "n_batch": args.batch_size,
         "n_ubatch": args.ubatch_size,
+        "mmap": bool(args.mmap),
         "test": f"pp{args.prompt_tokens}+tg{args.generation_tokens}",
         "avg_ts": round(throughput, 6),
         "stddev_ts": 0.0,

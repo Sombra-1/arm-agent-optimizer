@@ -170,3 +170,16 @@ def test_paths_with_spaces_and_exact_argument_generation(
     ]
     assert result.requested_settings["extra_environment"] == {"API_TOKEN": "<redacted>"}
     assert "secret-value" not in str(result.model_dump())
+
+
+def test_server_mmap_true_uses_positive_paired_switch(
+    config_factory: Callable[..., LlamaServerConfig],
+    server_capabilities: ServerCapabilities,
+) -> None:
+    result = build_llama_server_command(
+        config_factory(port=38291, mmap=True),
+        server_capabilities,
+    )
+
+    assert "--mmap" in result.arguments
+    assert "--no-mmap" not in result.arguments

@@ -25,6 +25,13 @@ class OutputFormat(StrEnum):
     CSV = "csv"
 
 
+class BooleanOptionForm(StrEnum):
+    NUMERIC_01 = "numeric_01"
+    PAIRED_SWITCHES = "paired_switches"
+    TRUE_ONLY = "true_only"
+    UNSUPPORTED = "unsupported"
+
+
 class ScreeningStatus(StrEnum):
     INITIALIZING = "initializing"
     VALIDATING_PLAN = "validating_plan"
@@ -75,6 +82,15 @@ class CapabilityMapping(ScreeningModel):
     supported: bool
     selected_flag: str | None
     aliases_observed: list[str]
+    boolean_form: BooleanOptionForm | None = None
+
+    def represents_boolean(self, value: bool) -> bool:
+        if self.boolean_form in {
+            BooleanOptionForm.NUMERIC_01,
+            BooleanOptionForm.PAIRED_SWITCHES,
+        }:
+            return True
+        return value and self.boolean_form is BooleanOptionForm.TRUE_ONLY
 
 
 class OutputFormatSelection(ScreeningModel):

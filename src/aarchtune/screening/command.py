@@ -8,6 +8,7 @@ from aarchtune.screening.errors import BenchCommandError
 from aarchtune.screening.models import (
     BenchCommand,
     BenchSignature,
+    BooleanOptionForm,
     LlamaBenchCapabilities,
     OutputFormat,
     ScreeningScenario,
@@ -49,17 +50,22 @@ def build_bench_command(
             add(name, value)
     mmap = signature.settings.mmap
     if mmap is not None:
-        aliases = capabilities.mappings["mmap"].aliases_observed
-        if mmap and "--mmap" in aliases:
+        mapping = capabilities.mappings["mmap"]
+        if mapping.boolean_form is BooleanOptionForm.NUMERIC_01:
+            arguments.extend(["--mmap", "1" if mmap else "0"])
+            mapped["mmap"] = "--mmap"
+        elif mapping.boolean_form is BooleanOptionForm.PAIRED_SWITCHES:
+            selected = "--mmap" if mmap else "--no-mmap"
+            arguments.append(selected)
+            mapped["mmap"] = selected
+        elif mmap and mapping.boolean_form is BooleanOptionForm.TRUE_ONLY:
             arguments.append("--mmap")
             mapped["mmap"] = "--mmap"
-        elif not mmap and "--no-mmap" in aliases:
-            arguments.append("--no-mmap")
-            mapped["mmap"] = "--no-mmap"
-        elif mmap and "--no-mmap" in aliases:
-            mapped["mmap"] = "runtime default proven by --no-mmap"
         else:
-            raise BenchCommandError(f"mmap={mmap} cannot be represented")
+            form = mapping.boolean_form or BooleanOptionForm.UNSUPPORTED
+            raise BenchCommandError(
+                f"mmap={mmap} cannot be represented by llama-bench boolean form {form.value}"
+            )
     if signature.settings.numa_mode not in {None, "disabled"}:
         add("numa_mode", signature.settings.numa_mode)
     if scenario.prompt_tokens:
