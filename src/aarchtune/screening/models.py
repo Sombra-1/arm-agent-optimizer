@@ -75,6 +75,13 @@ class MetricKind(StrEnum):
     PREFILL = "prefill"
     DECODE = "decode"
     COMBINED = "combined"
+    UNKNOWN = "unknown"
+
+
+class ScenarioCommandForm(StrEnum):
+    PREFILL = "prefill"
+    DECODE = "decode"
+    COMBINED = "combined"
 
 
 class CapabilityMapping(ScreeningModel):
@@ -221,6 +228,9 @@ class BenchCommand(ScreeningModel):
     output_format: OutputFormat
     signature_id: str
     scenario_id: str
+    scenario_command_form: ScenarioCommandForm
+    requested_prompt_tokens: int
+    requested_generation_tokens: int
     repetition: int
 
 
@@ -289,6 +299,8 @@ class NormalizedBenchMeasurement(ScreeningModel):
     backend: CanonicalValue
     build_commit: CanonicalValue
     build_number: CanonicalValue
+    matches_requested_scenario: bool
+    screening_usable: bool
     provenance_valid: bool
     provenance_errors: list[str] = Field(default_factory=list)
 

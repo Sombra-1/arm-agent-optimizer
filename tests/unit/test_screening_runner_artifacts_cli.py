@@ -36,12 +36,13 @@ def _config(
     name: str,
     repetitions: int = 2,
     prompt: int = 0,
+    generation: int = 16,
 ) -> ScreeningConfig:
     return ScreeningConfig(
         plan_dir=screen_plan_dir,
         bench_binary=fake_bench,
         output_dir=tmp_path / name,
-        scenario_path=_scenario(tmp_path / f"{name}.yaml", prompt=prompt),
+        scenario_path=_scenario(tmp_path / f"{name}.yaml", prompt=prompt, generation=generation),
         repetitions=repetitions,
         advance_count=4,
         invocation_timeout_seconds=2.0,
@@ -81,6 +82,119 @@ def test_healthy_screening_artifacts_and_validation(
         "optimization-passport.json",
         "report.html",
     }.intersection(item.name for item in result.output_dir.iterdir())
+
+
+def _jsonl(path: Path) -> list[dict[str, object]]:
+    return [json.loads(line) for line in path.read_text().splitlines() if line]
+
+
+def test_extra_non_target_rows_are_preserved_without_invalidating_target(
+    tmp_path: Path,
+    screen_plan_dir: Path,
+    fake_bench: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FAKE_LLAMA_BENCH_SCENARIO", "extra-non-target-row")
+    result = run_screening(
+        _config(
+            tmp_path,
+            screen_plan_dir,
+            fake_bench,
+            name="extra-row",
+            repetitions=1,
+            prompt=128,
+            generation=0,
+        )
+    )
+
+    assert result.status is ScreeningStatus.COMPLETED
+    assert result.summary is not None
+    assert result.summary.failed_invocations == 0
+    measurements = _jsonl(result.output_dir / "normalized-measurements.jsonl")
+    target_count = sum(item["matches_requested_scenario"] is True for item in measurements)
+    assert target_count == result.summary.expected_invocations
+    assert sum(item["screening_usable"] is True for item in measurements) == target_count
+    assert sum(item["matches_requested_scenario"] is False for item in measurements) == target_count
+    signature_results = _jsonl(result.output_dir / "signature-results.jsonl")
+    assert all(
+        aggregate["successful_repetitions"] == 1 and aggregate["throughput"]["count"] == 1
+        for signature in signature_results
+        for aggregate in signature["scenario_aggregates"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("fixture_mode", "failure_code"),
+    [
+        ("missing-target-row", "target_row_missing"),
+        ("ambiguous-target-row", "target_row_ambiguous"),
+        ("settings-mismatch", "settings_mismatch"),
+        ("missing-throughput", "invalid_target_measurement"),
+    ],
+)
+def test_target_row_failure_modes_are_precise(
+    tmp_path: Path,
+    screen_plan_dir: Path,
+    fake_bench: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fixture_mode: str,
+    failure_code: str,
+) -> None:
+    monkeypatch.setenv("FAKE_LLAMA_BENCH_SCENARIO", fixture_mode)
+    result = run_screening(
+        _config(
+            tmp_path,
+            screen_plan_dir,
+            fake_bench,
+            name=fixture_mode,
+            repetitions=1,
+            prompt=128,
+            generation=0,
+        )
+    )
+
+    failures = _jsonl(result.output_dir / "failures.jsonl")
+    matching_failures = [item for item in failures if item["code"] == failure_code]
+    assert matching_failures
+    assert all(
+        "requested prompt=128, generation=0" in str(item["reason"]) for item in matching_failures
+    )
+    assert all("observed token pairs=" in str(item["reason"]) for item in matching_failures)
+    if fixture_mode != "settings-mismatch":
+        assert result.status is ScreeningStatus.FAILED
+
+
+def test_combined_scenario_uses_dedicated_prompt_generation_form(
+    tmp_path: Path,
+    screen_plan_dir: Path,
+    fake_bench: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FAKE_LLAMA_BENCH_SCENARIO", "healthy-jsonl")
+    result = run_screening(
+        _config(
+            tmp_path,
+            screen_plan_dir,
+            fake_bench,
+            name="combined",
+            repetitions=1,
+            prompt=512,
+            generation=128,
+        )
+    )
+
+    assert result.status is ScreeningStatus.COMPLETED
+    matrix = _jsonl(result.output_dir / "benchmark-matrix.jsonl")
+    for entry in matrix:
+        command = entry["command"]
+        assert isinstance(command, dict)
+        arguments = command["arguments"]
+        assert isinstance(arguments, list)
+        assert "-pg" in arguments
+        assert arguments[arguments.index("-pg") + 1] == "512,128"
+        assert "-p" not in arguments
+        assert "-n" not in arguments
+        assert command["scenario_command_form"] == "combined"
 
 
 @pytest.mark.parametrize("scenario", ["healthy-json", "healthy-csv"])

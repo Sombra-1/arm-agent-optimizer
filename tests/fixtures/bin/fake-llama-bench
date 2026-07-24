@@ -19,8 +19,9 @@ fake-llama-bench (synthetic fixture)
   -tb, --threads-batch <count>
   -b, --batch-size <count>
   -ub, --ubatch-size <count>
-  -p, --prompt-tokens <count>
-  -n, --generation-tokens <count>
+  -p, --n-prompt <n>
+  -n, --n-gen <n>
+  -pg <pp,tg>
   -r, --repetitions <count>
   -o, --output <jsonl|json|csv>
   --mmap <0|1>
@@ -51,13 +52,27 @@ def arguments() -> argparse.Namespace:
     parser.add_argument("-tb", "--threads-batch", type=int)
     parser.add_argument("-b", "--batch-size", type=int, default=512)
     parser.add_argument("-ub", "--ubatch-size", type=int, default=128)
-    parser.add_argument("-p", "--prompt-tokens", type=int, default=0)
-    parser.add_argument("-n", "--generation-tokens", type=int, default=0)
+    parser.add_argument("-p", "--n-prompt", dest="prompt_tokens", type=int)
+    parser.add_argument("-n", "--n-gen", dest="generation_tokens", type=int)
+    parser.add_argument("-pg", dest="prompt_generation")
     parser.add_argument("-r", "--repetitions", type=int, default=1)
     parser.add_argument("-o", "--output", choices=("jsonl", "json", "csv"), default="jsonl")
     parser.add_argument("--mmap", type=int, choices=(0, 1), default=1)
     parser.add_argument("--numa", default="disabled")
-    return parser.parse_args()
+    parsed = parser.parse_args()
+    if parsed.prompt_generation is not None:
+        try:
+            prompt, generation = parsed.prompt_generation.split(",", 1)
+            parsed.prompt_tokens = int(prompt)
+            parsed.generation_tokens = int(generation)
+        except ValueError:
+            parser.error("-pg requires <pp,tg>")
+    else:
+        parsed.prompt_tokens = 512 if parsed.prompt_tokens is None else parsed.prompt_tokens
+        parsed.generation_tokens = (
+            128 if parsed.generation_tokens is None else parsed.generation_tokens
+        )
+    return parsed
 
 
 def measurement(args: argparse.Namespace) -> dict[str, object]:
@@ -152,6 +167,32 @@ def main() -> int:
         print("{not machine readable")
         return 0
     rows = [measurement(args)]
+    if active == "pinned-split-tests" and args.prompt_generation is None:
+        rows = []
+        if args.prompt_tokens:
+            prefill = argparse.Namespace(**vars(args))
+            prefill.generation_tokens = 0
+            rows.append(measurement(prefill))
+        if args.generation_tokens:
+            decode = argparse.Namespace(**vars(args))
+            decode.prompt_tokens = 0
+            rows.append(measurement(decode))
+    elif active == "extra-non-target-row":
+        extra = argparse.Namespace(**vars(args))
+        if args.prompt_tokens and not args.generation_tokens:
+            extra.prompt_tokens = 0
+            extra.generation_tokens = 128
+        else:
+            extra.prompt_tokens = 512
+            extra.generation_tokens = 0
+        rows.append(measurement(extra))
+    elif active == "missing-target-row":
+        replacement = argparse.Namespace(**vars(args))
+        replacement.prompt_tokens = 0 if args.prompt_tokens else 512
+        replacement.generation_tokens = 128 if args.prompt_tokens else 0
+        rows = [measurement(replacement)]
+    elif active == "ambiguous-target-row":
+        rows.append(measurement(args))
     if active == "partial-rows":
         rows.append({"synthetic_fixture": True, "n_threads": args.threads})
     emit(rows, args.output)

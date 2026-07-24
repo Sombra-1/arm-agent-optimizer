@@ -342,5 +342,16 @@ def test_collector_reads_real_failed_synthetic_screening_artifacts(
     assert summary["signature_statuses"]["unstable"] > 0
     assert summary["mmap_command_forms"]["numeric_true"] > 0
     assert summary["mmap_command_forms"]["numeric_false"] > 0
+    commands = [
+        json.loads(line)
+        for line in (destination / "command-evidence.jsonl").read_text().splitlines()
+    ]
+    assert commands
+    assert all(command["scenario_command_form"] == "decode" for command in commands)
+    assert all(command["requested_prompt_tokens"] == 0 for command in commands)
+    assert all(command["requested_generation_tokens"] == 16 for command in commands)
+    assert all(command["observed_token_pairs"] == [[0, 16]] for command in commands)
+    assert all(command["target_row_count"] == 1 for command in commands)
+    assert all(command["non_target_row_count"] == 0 for command in commands)
     inventory = json.loads((destination / "inventory.json").read_text())
     assert all(item["included"] for item in inventory["files"].values())

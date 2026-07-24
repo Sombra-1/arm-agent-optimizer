@@ -11,6 +11,7 @@ from aarchtune.screening.models import (
     BooleanOptionForm,
     LlamaBenchCapabilities,
     OutputFormat,
+    ScenarioCommandForm,
     ScreeningScenario,
 )
 
@@ -20,6 +21,33 @@ def _flag(capabilities: LlamaBenchCapabilities, name: str) -> str:
     if not mapping.supported or mapping.selected_flag is None:
         raise BenchCommandError(f"Required llama-bench mapping is unavailable: {name}")
     return mapping.selected_flag
+
+
+def build_scenario_arguments(
+    capabilities: LlamaBenchCapabilities,
+    scenario: ScreeningScenario,
+) -> tuple[list[str], dict[str, str], ScenarioCommandForm]:
+    if scenario.prompt_tokens and scenario.generation_tokens:
+        flag = _flag(capabilities, "prompt_generation")
+        return (
+            [flag, f"{scenario.prompt_tokens},{scenario.generation_tokens}"],
+            {"prompt_generation": flag},
+            ScenarioCommandForm.COMBINED,
+        )
+    prompt_flag = _flag(capabilities, "prompt_tokens")
+    generation_flag = _flag(capabilities, "generation_tokens")
+    arguments = [
+        prompt_flag,
+        str(scenario.prompt_tokens),
+        generation_flag,
+        str(scenario.generation_tokens),
+    ]
+    mapped = {
+        "prompt_tokens": prompt_flag,
+        "generation_tokens": generation_flag,
+    }
+    form = ScenarioCommandForm.PREFILL if scenario.prompt_tokens else ScenarioCommandForm.DECODE
+    return arguments, mapped, form
 
 
 def build_bench_command(
@@ -68,10 +96,11 @@ def build_bench_command(
             )
     if signature.settings.numa_mode not in {None, "disabled"}:
         add("numa_mode", signature.settings.numa_mode)
-    if scenario.prompt_tokens:
-        add("prompt_tokens", scenario.prompt_tokens)
-    if scenario.generation_tokens:
-        add("generation_tokens", scenario.generation_tokens)
+    scenario_arguments, scenario_mappings, scenario_form = build_scenario_arguments(
+        capabilities, scenario
+    )
+    arguments.extend(scenario_arguments)
+    mapped.update(scenario_mappings)
     if capabilities.mappings["repetitions"].supported:
         add("repetitions", 1)
     output_format = capabilities.output.selected_format
@@ -87,5 +116,8 @@ def build_bench_command(
         output_format=OutputFormat(output_format),
         signature_id=signature.id,
         scenario_id=scenario.id,
+        scenario_command_form=scenario_form,
+        requested_prompt_tokens=scenario.prompt_tokens,
+        requested_generation_tokens=scenario.generation_tokens,
         repetition=repetition,
     )

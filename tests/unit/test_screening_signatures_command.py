@@ -269,7 +269,7 @@ def test_numeric_mmap_form_uses_explicit_boolean_value(
         "#!/bin/sh\n"
         "if [ \"$1\" = --version ]; then echo 'llama-bench b10106'; exit 0; fi\n"
         'if [ "$1" = --help ]; then\n'
-        "  echo '-m, --model <path> -n, --generation-tokens <count>'\n"
+        "  echo '-m, --model <path> -p, --n-prompt <n> -n, --n-gen <n>'\n"
         "  echo '-o, --output <jsonl> -mmp, --mmap <0|1>'\n"
         "  exit 0\n"
         "fi\n",
@@ -301,3 +301,57 @@ def test_numeric_mmap_form_uses_explicit_boolean_value(
     true_arguments = command_for(True)
     true_index = true_arguments.index("--mmap")
     assert true_arguments[true_index : true_index + 2] == ["--mmap", "1"]
+
+
+@pytest.mark.parametrize(
+    ("scenario", "expected", "absent"),
+    [
+        (
+            ScreeningScenario(id="prefill", prompt_tokens=128, generation_tokens=0),
+            ["-p", "128", "-n", "0"],
+            "-pg",
+        ),
+        (
+            ScreeningScenario(id="decode", prompt_tokens=0, generation_tokens=128),
+            ["-p", "0", "-n", "128"],
+            "-pg",
+        ),
+        (
+            ScreeningScenario(id="mixed", prompt_tokens=512, generation_tokens=128),
+            ["-pg", "512,128"],
+            "-p",
+        ),
+    ],
+)
+def test_scenario_commands_neutralize_defaults_and_use_combined_form(
+    bench_capabilities: LlamaBenchCapabilities,
+    fake_model: Path,
+    scenario: ScreeningScenario,
+    expected: list[str],
+    absent: str,
+) -> None:
+    signature = BenchSignature(
+        id="bench-scenario",
+        signature_hash="scenario",
+        settings=BenchSignatureSettings(mmap=True),
+        compatible=True,
+    )
+
+    command = build_bench_command(
+        bench_capabilities,
+        fake_model,
+        signature,
+        scenario,
+        repetition=1,
+    )
+
+    start = command.arguments.index(expected[0])
+    assert command.arguments[start : start + len(expected)] == expected
+    if scenario.prompt_tokens and scenario.generation_tokens:
+        assert "-p" not in command.arguments
+        assert "-n" not in command.arguments
+        assert command.mapped_flags["prompt_generation"] == "-pg"
+    else:
+        assert absent not in command.arguments
+        assert command.mapped_flags["prompt_tokens"] == "-p"
+        assert command.mapped_flags["generation_tokens"] == "-n"

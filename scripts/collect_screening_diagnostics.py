@@ -49,6 +49,9 @@ KNOWN_FAILURE_CODES = (
     "nonzero_exit",
     "parser_failure",
     "settings_mismatch",
+    "target_row_missing",
+    "target_row_ambiguous",
+    "invalid_target_measurement",
 )
 
 SIGNATURE_STATUSES = (
@@ -228,6 +231,8 @@ def _derive_command_evidence(
     matrix: list[dict[str, Any]] | None,
     signatures_list: list[dict[str, Any]] | None,
     inspection: dict[str, Any] | None,
+    measurements: list[dict[str, Any]] | None,
+    failures: list[dict[str, Any]] | None,
     redactor: Redactor,
 ) -> tuple[list[dict[str, Any]], dict[str, int | None]]:
     counts = _nullable_counts(MMAP_FORMS, matrix is not None)
@@ -242,6 +247,13 @@ def _derive_command_evidence(
         mmap_mapping = mappings.get("mmap") if isinstance(mappings, dict) else None
         if isinstance(mmap_mapping, dict) and isinstance(mmap_mapping.get("boolean_form"), str):
             capability_form = mmap_mapping["boolean_form"]
+    measurements_by_invocation: dict[str, list[dict[str, Any]]] = {}
+    for measurement in measurements or []:
+        invocation_id = str(measurement.get("invocation_id", ""))
+        measurements_by_invocation.setdefault(invocation_id, []).append(measurement)
+    failure_by_invocation = {
+        str(failure.get("invocation_id", "")): failure.get("code") for failure in failures or []
+    }
     evidence: list[dict[str, Any]] = []
     for entry in matrix:
         command = entry.get("command")
@@ -252,6 +264,18 @@ def _derive_command_evidence(
         if form is not None:
             current = counts[form]
             counts[form] = 1 if current is None else current + 1
+        invocation_id = str(entry.get("invocation_id", ""))
+        invocation_measurements = measurements_by_invocation.get(invocation_id, [])
+        observed_pairs = []
+        target_count = 0
+        for measurement in invocation_measurements:
+            prompt = measurement.get("prompt_tokens")
+            generation = measurement.get("generation_tokens")
+            prompt_value = prompt.get("value") if isinstance(prompt, dict) else None
+            generation_value = generation.get("value") if isinstance(generation, dict) else None
+            observed_pairs.append([prompt_value, generation_value])
+            if measurement.get("matches_requested_scenario") is True:
+                target_count += 1
         evidence.append(
             {
                 "invocation_id": entry.get("invocation_id"),
@@ -261,6 +285,17 @@ def _derive_command_evidence(
                 "argv": arguments,
                 "semantic_mmap": semantic,
                 "output_format": command.get("output_format"),
+                "scenario_command_form": command.get("scenario_command_form"),
+                "requested_prompt_tokens": command.get("requested_prompt_tokens"),
+                "requested_generation_tokens": command.get("requested_generation_tokens"),
+                "observed_token_pairs": observed_pairs,
+                "target_row_count": target_count if measurements is not None else None,
+                "non_target_row_count": (
+                    len(invocation_measurements) - target_count
+                    if measurements is not None
+                    else None
+                ),
+                "failure_classification": failure_by_invocation.get(invocation_id),
             }
         )
     return evidence, counts
@@ -415,10 +450,11 @@ def collect_diagnostics(
     signatures = _load_jsonl(screening_dir / "bench-signatures.jsonl")
     executions = _load_jsonl(screening_dir / "raw-executions.jsonl")
     failures = _load_jsonl(screening_dir / "failures.jsonl")
+    measurements = _load_jsonl(screening_dir / "normalized-measurements.jsonl")
     signature_results = _load_jsonl(screening_dir / "signature-results.jsonl")
 
     command_evidence, mmap_counts = _derive_command_evidence(
-        matrix, signatures, inspection, redactor
+        matrix, signatures, inspection, measurements, failures, redactor
     )
     _write_jsonl(destination / "command-evidence.jsonl", command_evidence)
     _write_json(

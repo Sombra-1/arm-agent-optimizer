@@ -163,3 +163,39 @@ def test_prompt_and_decode_kinds_remain_separate(tmp_path: Path) -> None:
         ScreeningScenario(id="decode", prompt_tokens=0, generation_tokens=16),
     )
     assert decode.metric_kind is MetricKind.DECODE
+
+
+def test_target_row_is_usable_and_extra_row_is_recorded_as_non_target(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "rows.jsonl"
+    path.write_text(
+        json.dumps(_row(n_prompt=128, n_gen=0))
+        + "\n"
+        + json.dumps(_row(n_prompt=0, n_gen=128))
+        + "\n"
+    )
+    scenario = ScreeningScenario(id="prefill", prompt_tokens=128, generation_tokens=0)
+    measurements = [
+        normalize_record(record, _signature(), scenario)
+        for record in parse_bench_output(path, OutputFormat.JSONL, "inv")
+    ]
+
+    assert [item.matches_requested_scenario for item in measurements] == [True, False]
+    assert [item.screening_usable for item in measurements] == [True, False]
+    assert measurements[0].metric_kind is MetricKind.PREFILL
+    assert measurements[1].metric_kind is MetricKind.DECODE
+
+
+def test_target_row_with_signature_mismatch_is_not_usable(tmp_path: Path) -> None:
+    path = tmp_path / "row.jsonl"
+    path.write_text(json.dumps(_row(n_prompt=128, n_gen=0, n_threads=9)) + "\n")
+    measurement = normalize_record(
+        parse_bench_output(path, OutputFormat.JSONL, "inv")[0],
+        _signature(),
+        ScreeningScenario(id="prefill", prompt_tokens=128, generation_tokens=0),
+    )
+
+    assert measurement.matches_requested_scenario is True
+    assert measurement.screening_usable is False
+    assert any("threads mismatch" in item for item in measurement.provenance_errors)

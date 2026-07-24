@@ -82,7 +82,7 @@ def aggregate_signature(
             if (
                 measurement.signature_id == signature.id
                 and measurement.scenario_id == scenario.id
-                and measurement.provenance_valid
+                and measurement.screening_usable
                 and measurement.throughput_tokens_per_second.available
                 and isinstance(measurement.throughput_tokens_per_second.value, (int, float))
                 and not isinstance(measurement.throughput_tokens_per_second.value, bool)
@@ -128,7 +128,7 @@ def aggregate_signature(
         float(measurement.throughput_tokens_per_second.value)
         for measurement in measurements
         if measurement.signature_id == signature.id
-        and measurement.provenance_valid
+        and measurement.screening_usable
         and measurement.throughput_tokens_per_second.available
         and isinstance(measurement.throughput_tokens_per_second.value, (int, float))
         and not isinstance(measurement.throughput_tokens_per_second.value, bool)

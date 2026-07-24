@@ -34,6 +34,7 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     "ubatch_size": ("-ub", "--ubatch-size", "--ubatch_size"),
     "prompt_tokens": ("-p", "--prompt-tokens", "--n-prompt"),
     "generation_tokens": ("-n", "--generation-tokens", "--n-gen"),
+    "prompt_generation": ("-pg",),
     "repetitions": ("-r", "--repetitions"),
     "output_format": ("-o", "--output", "--output-format", "--jsonl", "--json", "--csv"),
     "numa_mode": ("--numa",),

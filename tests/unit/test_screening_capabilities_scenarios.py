@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -54,6 +55,7 @@ def test_version_help_formats_and_complete_tokens(
         OutputFormat.JSON,
         OutputFormat.CSV,
     ]
+    assert bench_capabilities.mappings["prompt_generation"].selected_flag == "-pg"
     assert bench_capabilities.mappings["threads"].selected_flag == "-t"
     assert {"-tb", "--threads-batch"} <= set(
         bench_capabilities.mappings["threads_batch"].aliases_observed
@@ -106,7 +108,7 @@ def test_fake_bench_requires_numeric_mmap_value(
         str(fake_bench),
         "--model",
         str(fake_model),
-        "--generation-tokens",
+        "--n-gen",
         "1",
         "--output",
         "jsonl",
@@ -123,6 +125,42 @@ def test_fake_bench_requires_numeric_mmap_value(
     assert '"mmap":true' in enabled.stdout
     assert missing.returncode != 0
     assert invalid.returncode != 0
+
+
+def test_fake_bench_reproduces_pinned_split_test_defaults(
+    fake_bench: Path,
+    fake_model: Path,
+) -> None:
+    environment = {**os.environ, "FAKE_LLAMA_BENCH_SCENARIO": "pinned-split-tests"}
+    common = [
+        str(fake_bench),
+        "-m",
+        str(fake_model),
+        "--mmap",
+        "1",
+        "-o",
+        "jsonl",
+    ]
+
+    def pairs(arguments: list[str]) -> list[tuple[int, int]]:
+        result = subprocess.run(
+            [*common, *arguments],
+            capture_output=True,
+            text=True,
+            check=True,
+            env=environment,
+        )
+        return [
+            (row["n_prompt"], row["n_gen"])
+            for row in (json.loads(line) for line in result.stdout.splitlines())
+        ]
+
+    assert pairs(["-p", "128"]) == [(128, 0), (0, 128)]
+    assert pairs(["-n", "128"]) == [(512, 0), (0, 128)]
+    assert pairs(["-p", "512", "-n", "128"]) == [(512, 0), (0, 128)]
+    assert pairs(["-p", "128", "-n", "0"]) == [(128, 0)]
+    assert pairs(["-p", "0", "-n", "128"]) == [(0, 128)]
+    assert pairs(["-pg", "512,128"]) == [(512, 128)]
 
 
 def test_option_parser_prevents_substring_false_positives() -> None:
@@ -238,7 +276,7 @@ def test_invalid_scenario_files_are_rejected(
 def test_unsupported_scenarios_are_omitted_or_fail(
     bench_capabilities: LlamaBenchCapabilities,
 ) -> None:
-    prompt_only = bench_capabilities.model_copy(
+    no_generation = bench_capabilities.model_copy(
         update={
             "mappings": {
                 **bench_capabilities.mappings,
@@ -248,30 +286,57 @@ def test_unsupported_scenarios_are_omitted_or_fail(
             }
         }
     )
-    loaded = load_scenarios(None, prompt_only)
-    assert {item.id for item in loaded.scenarios} == {"prefill-small", "prefill-medium"}
-    neither = prompt_only.model_copy(
+    loaded = load_scenarios(None, no_generation)
+    assert [item.id for item in loaded.scenarios] == ["mixed"]
+    assert all(
+        "zero-valued neutralization required" in str(item["reason"])
+        for item in loaded.omitted_scenarios
+        if item["id"] != "mixed"
+    )
+
+    no_prompt_or_generation = no_generation.model_copy(
         update={
             "mappings": {
-                **prompt_only.mappings,
-                "prompt_tokens": prompt_only.mappings["prompt_tokens"].model_copy(
+                **no_generation.mappings,
+                "prompt_tokens": no_generation.mappings["prompt_tokens"].model_copy(
                     update={"supported": False, "selected_flag": None}
                 ),
+            }
+        }
+    )
+    assert [item.id for item in load_scenarios(None, no_prompt_or_generation).scenarios] == [
+        "mixed"
+    ]
+
+    no_combined = bench_capabilities.model_copy(
+        update={
+            "mappings": {
+                **bench_capabilities.mappings,
+                "prompt_generation": bench_capabilities.mappings["prompt_generation"].model_copy(
+                    update={"supported": False, "selected_flag": None}
+                ),
+            }
+        }
+    )
+    without_combined = load_scenarios(None, no_combined)
+    assert [item.id for item in without_combined.scenarios] == [
+        "prefill-small",
+        "prefill-medium",
+        "decode",
+    ]
+    assert without_combined.omitted_scenarios == [
+        {"id": "mixed", "reason": "combined prompt-generation flag unavailable"}
+    ]
+
+    none = no_prompt_or_generation.model_copy(
+        update={
+            "mappings": {
+                **no_prompt_or_generation.mappings,
+                "prompt_generation": no_prompt_or_generation.mappings[
+                    "prompt_generation"
+                ].model_copy(update={"supported": False, "selected_flag": None}),
             }
         }
     )
     with pytest.raises(ScenarioError, match="No configured scenario"):
-        load_scenarios(None, neither)
-
-    generation_only = bench_capabilities.model_copy(
-        update={
-            "mappings": {
-                **bench_capabilities.mappings,
-                "prompt_tokens": bench_capabilities.mappings["prompt_tokens"].model_copy(
-                    update={"supported": False, "selected_flag": None}
-                ),
-            }
-        }
-    )
-    generated = load_scenarios(None, generation_only)
-    assert [item.id for item in generated.scenarios] == ["decode"]
+        load_scenarios(None, none)

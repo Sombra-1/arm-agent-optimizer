@@ -70,6 +70,30 @@ def _failure(invocation_id: str, code: str, reason: str) -> dict[str, object]:
     }
 
 
+def _token_pair(measurement: NormalizedBenchMeasurement) -> tuple[object, object]:
+    prompt = (
+        measurement.prompt_tokens.value if measurement.prompt_tokens.available else "unavailable"
+    )
+    generation = (
+        measurement.generation_tokens.value
+        if measurement.generation_tokens.available
+        else "unavailable"
+    )
+    return prompt, generation
+
+
+def _scenario_evidence(
+    requested_prompt: int,
+    requested_generation: int,
+    measurements: list[NormalizedBenchMeasurement],
+) -> str:
+    observed = [_token_pair(measurement) for measurement in measurements]
+    return (
+        f"requested prompt={requested_prompt}, generation={requested_generation}; "
+        f"observed token pairs={observed}"
+    )
+
+
 def run_screening(config: ScreeningConfig) -> ScreeningRunResult:
     plan_root = config.plan_dir.expanduser().resolve()
     plan = _load_plan(plan_root)
@@ -296,26 +320,84 @@ def run_screening(config: ScreeningConfig) -> ScreeningRunResult:
                     failure_count += 1
                     failure_writer.append(_failure(entry.invocation_id, "parser_failure", str(exc)))
                     continue
-                provenance_errors: list[str] = []
+                invocation_measurements: list[NormalizedBenchMeasurement] = []
                 for record in records:
                     normalized = normalize_record(
                         record,
                         signature_by_id[entry.signature_id],
                         scenario_by_id[entry.scenario_id],
                     )
-                    measurements.append(normalized)
-                    measurement_writer.append(normalized)
-                    if not normalized.provenance_valid:
-                        provenance_errors.extend(normalized.provenance_errors)
-                if provenance_errors:
+                    invocation_measurements.append(normalized)
+                scenario = scenario_by_id[entry.scenario_id]
+                evidence = _scenario_evidence(
+                    scenario.prompt_tokens,
+                    scenario.generation_tokens,
+                    invocation_measurements,
+                )
+                target_rows = [
+                    measurement
+                    for measurement in invocation_measurements
+                    if measurement.matches_requested_scenario
+                ]
+                if not target_rows:
                     failure_count += 1
                     failure_writer.append(
                         _failure(
                             entry.invocation_id,
-                            "settings_mismatch",
-                            "; ".join(dict.fromkeys(provenance_errors)),
+                            "target_row_missing",
+                            evidence,
                         )
                     )
+                elif len(target_rows) > 1:
+                    failure_count += 1
+                    invocation_measurements = [
+                        measurement.model_copy(
+                            update={
+                                "screening_usable": False,
+                                "provenance_valid": False,
+                                "provenance_errors": [
+                                    *measurement.provenance_errors,
+                                    "multiple rows matched the requested scenario",
+                                ],
+                            }
+                        )
+                        if measurement.matches_requested_scenario
+                        else measurement
+                        for measurement in invocation_measurements
+                    ]
+                    failure_writer.append(
+                        _failure(
+                            entry.invocation_id,
+                            "target_row_ambiguous",
+                            f"{evidence}; matching row count={len(target_rows)}",
+                        )
+                    )
+                else:
+                    target = target_rows[0]
+                    throughput = target.throughput_tokens_per_second
+                    if not throughput.available or throughput.value == 0:
+                        failure_count += 1
+                        failure_writer.append(
+                            _failure(
+                                entry.invocation_id,
+                                "invalid_target_measurement",
+                                f"{evidence}; "
+                                + "; ".join(dict.fromkeys(target.provenance_errors)),
+                            )
+                        )
+                    elif not target.provenance_valid:
+                        failure_count += 1
+                        failure_writer.append(
+                            _failure(
+                                entry.invocation_id,
+                                "settings_mismatch",
+                                f"{evidence}; "
+                                + "; ".join(dict.fromkeys(target.provenance_errors)),
+                            )
+                        )
+                for measurement in invocation_measurements:
+                    measurements.append(measurement)
+                    measurement_writer.append(measurement)
         manager.update(
             status=ScreeningStatus.NORMALIZING,
             stage=ScreeningStatus.NORMALIZING,

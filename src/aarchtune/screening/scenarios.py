@@ -31,14 +31,23 @@ def load_scenarios(path: Path | None, capabilities: LlamaBenchCapabilities) -> S
         raise ScenarioError(f"Invalid screening scenario configuration: {exc}") from exc
     prompt_supported = capabilities.mappings["prompt_tokens"].supported
     generation_supported = capabilities.mappings["generation_tokens"].supported
+    combined_supported = capabilities.mappings["prompt_generation"].supported
     supported = []
     omitted: list[dict[str, Any]] = []
     for scenario in scenario_set.scenarios:
         reasons = []
-        if scenario.prompt_tokens and not prompt_supported:
-            reasons.append("prompt-token flag unavailable")
-        if scenario.generation_tokens and not generation_supported:
-            reasons.append("generation-token flag unavailable")
+        if scenario.prompt_tokens and scenario.generation_tokens:
+            if not combined_supported:
+                reasons.append("combined prompt-generation flag unavailable")
+        elif not prompt_supported or not generation_supported:
+            missing = []
+            if not prompt_supported:
+                missing.append("prompt-token")
+            if not generation_supported:
+                missing.append("generation-token")
+            reasons.append(
+                f"{' and '.join(missing)} flag unavailable; zero-valued neutralization required"
+            )
         if reasons:
             omitted.append({"id": scenario.id, "reason": "; ".join(reasons)})
         else:
