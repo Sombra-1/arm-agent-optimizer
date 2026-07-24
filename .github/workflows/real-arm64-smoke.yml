@@ -167,8 +167,12 @@ jobs:
           git -C "$LLAMA_SOURCE_DIR" checkout --detach FETCH_HEAD
           actual_commit=$(git -C "$LLAMA_SOURCE_DIR" rev-parse HEAD)
           [[ "$actual_commit" == "$LLAMA_COMMIT" ]]
-          git -C "$LLAMA_SOURCE_DIR" describe --tags --exact-match HEAD |
-            grep -Fx "$LLAMA_RELEASE"
+          tag_commit=$(
+            git -C "$LLAMA_SOURCE_DIR" ls-remote \
+              --exit-code --tags --refs upstream "refs/tags/$LLAMA_RELEASE" |
+              awk '{print $1}'
+          )
+          [[ "$tag_commit" == "$LLAMA_COMMIT" ]]
           grep -q 'option(GGML_CPU_KLEIDIAI' "$LLAMA_SOURCE_DIR/ggml/CMakeLists.txt"
           grep -q 'set(TARGET llama-server)' "$LLAMA_SOURCE_DIR/tools/server/CMakeLists.txt"
           grep -q 'set(TARGET llama-bench)' "$LLAMA_SOURCE_DIR/tools/llama-bench/CMakeLists.txt"
