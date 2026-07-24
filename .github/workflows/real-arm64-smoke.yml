@@ -335,6 +335,8 @@ jobs:
             "$LLAMA_BUILD_DIR/bin/llama-cli" \
             --model "$MODEL_PATH" \
             --prompt 'Return only the word OK.' \
+            --single-turn \
+            --simple-io \
             --n-predict 8 \
             --seed 42 \
             --temp 0 \
@@ -346,10 +348,10 @@ jobs:
           wait "$probe_pid"
           probe_exit=$?
           set -e
-          [[ "$probe_exit" -eq 0 ]]
 
           sed "s#${RUNNER_TEMP}#\\$RUNNER_TEMP#g" "$probe_stderr" |
-            grep -Ei 'CPU_KLEIDIAI|KleidiAI|load_backend|system_info|model loader' |
+            grep -Ei \
+              'CPU_KLEIDIAI|KleidiAI|load_backend|system_info|llama_model_loader|load_tensors|llama_context|load time|prompt eval|eval time' |
             head -200 > "$EVIDENCE_DIR/llama-build/runtime-provenance.txt" || true
           if grep -Eiq \
             'CPU_KLEIDIAI|KleidiAI[^[:alnum:]]*(backend|enabled|active|loaded|in use|available)[^[:alnum:]]*(true|yes|on|1)?' \
@@ -358,15 +360,27 @@ jobs:
           else
             kleidiai_status=unknown
           fi
+          probe_completed=false
+          probe_timed_out=false
+          if [[ "$probe_exit" -eq 0 ]]; then
+            probe_completed=true
+          elif [[ "$probe_exit" -eq 124 || "$probe_exit" -eq 137 ]]; then
+            probe_timed_out=true
+          fi
           {
             echo "probe_exit_code=$probe_exit"
-            echo "model_loaded=true"
+            echo "probe_completed=$probe_completed"
+            echo "probe_timed_out=$probe_timed_out"
             echo "cpu_backend_requested=true"
             echo "kleidiai_runtime_evidence=$kleidiai_status"
             echo "generated_text_published=false"
+            if [[ "$probe_completed" == true ]]; then
+              echo "model_loaded=true"
+            fi
           } > "$EVIDENCE_DIR/llama-build/runtime-status.txt"
           echo "KLEIDIAI_RUNTIME_STATUS=$kleidiai_status" >> "$GITHUB_ENV"
           rm -f "$probe_stdout" "$probe_stderr"
+          [[ "$probe_exit" -eq 0 ]]
 
       - name: Run real AArchTune smoke optimization
         if: inputs.mode == 'smoke'
@@ -539,21 +553,26 @@ jobs:
             if kill -0 -- "-$pgid" 2>/dev/null; then
               kill -KILL -- "-$pgid"
             fi
-            if ps -eo pgid=,comm= | awk -v owned="$pgid" '
-              $1 == owned && ($2 == "llama-server" || $2 == "llama-bench" || $2 ~ /aarchtune/) {
-                found=1
-              }
+            if ps -eo pgid= | awk -v owned="$pgid" '
+              $1 == owned { found=1 }
               END { exit found ? 0 : 1 }
             '; then
               cleanup_ok=false
             fi
           done
+          rm -f \
+            "$RUNNER_TEMP/llama-cli-probe.stdout" \
+            "$RUNNER_TEMP/llama-cli-probe.stderr"
           rm -f "$MODEL_PATH"
           rm -rf "$MODEL_DIR" "$MODEL_CACHE_DIR"
+          [[ ! -e "$RUNNER_TEMP/llama-cli-probe.stdout" ]]
+          [[ ! -e "$RUNNER_TEMP/llama-cli-probe.stderr" ]]
           [[ ! -e "$MODEL_PATH" ]]
           [[ ! -d "$MODEL_CACHE_DIR" ]]
           {
             echo "tracked_process_groups_stopped=$cleanup_ok"
+            echo "probe_stdout_deleted=true"
+            echo "probe_stderr_deleted=true"
             echo "model_deleted=true"
             echo "model_cache_deleted=true"
             echo "cleanup_complete=$cleanup_ok"
