@@ -211,6 +211,7 @@ jobs:
             -DLLAMA_BUILD_TOOLS=ON
             -DLLAMA_BUILD_SERVER=ON
             -DLLAMA_BUILD_UI=OFF
+            -DLLAMA_USE_PREBUILT_UI=OFF
             -DLLAMA_BUILD_APP=OFF
           )
           printf '%q ' "${configuration[@]}" > "$EVIDENCE_DIR/llama-build/cmake-command.txt"
@@ -225,7 +226,7 @@ jobs:
             tee "$EVIDENCE_DIR/llama-build/build.log"
           {
             echo "finished=$(date --utc --iso-8601=seconds)"
-            echo "status=success"
+            echo "build_status=success"
             echo "kleidiai_build_enabled=true"
           } >> "$EVIDENCE_DIR/llama-build/status.txt"
 
@@ -233,10 +234,24 @@ jobs:
             path="$LLAMA_BUILD_DIR/bin/$binary"
             [[ -x "$path" ]]
             printf '%s=%s\n' "$binary" "$path" >> "$EVIDENCE_DIR/llama-build/binary-paths.txt"
-            "$path" --version > "$EVIDENCE_DIR/versions/$binary.txt" 2>&1
             sha256sum "$path" >> "$EVIDENCE_DIR/checksums/llama-binaries.sha256"
+            set +e
+            "$path" --version > "$EVIDENCE_DIR/versions/$binary.txt" 2>&1
+            version_exit=$?
+            set -e
+            printf 'version_command_exit_code=%s\n' "$version_exit" \
+              >> "$EVIDENCE_DIR/versions/$binary.txt"
+            if [[ "$binary" == "llama-bench" ]]; then
+              [[ "$version_exit" -eq 1 ]]
+              grep -Fq 'invalid parameter for argument: --version' \
+                "$EVIDENCE_DIR/versions/$binary.txt"
+              "$path" --help > "$EVIDENCE_DIR/versions/llama-bench-help.txt" 2>&1
+            else
+              [[ "$version_exit" -eq 0 ]]
+              grep -q "${LLAMA_COMMIT:0:7}" "$EVIDENCE_DIR/versions/$binary.txt"
+            fi
           done
-          grep -q "${LLAMA_COMMIT:0:7}" "$EVIDENCE_DIR/versions/llama-server.txt"
+          echo "binary_verification=passed" >> "$EVIDENCE_DIR/llama-build/status.txt"
           df -h > "$EVIDENCE_DIR/llama-build/disk-after.txt"
           du -sh "$LLAMA_SOURCE_DIR" "$LLAMA_BUILD_DIR" \
             > "$EVIDENCE_DIR/llama-build/disk-usage.txt"
@@ -554,6 +569,16 @@ jobs:
           architecture=$(cat "$EVIDENCE_DIR/runner/uname-m.txt")
           cpu_count=$(cat "$EVIDENCE_DIR/runner/nproc.txt")
           ram_bytes=$(awk '/^Mem:/ {print $2}' "$EVIDENCE_DIR/runner/free-b.txt")
+          kleidiai_build_enabled=$(
+            awk -F= '$1 == "kleidiai_build_enabled" {print $2}' \
+              "$EVIDENCE_DIR/llama-build/status.txt" 2>/dev/null || true
+          )
+          binary_verification=$(
+            awk -F= '$1 == "binary_verification" {print $2}' \
+              "$EVIDENCE_DIR/llama-build/status.txt" 2>/dev/null || true
+          )
+          kleidiai_build_enabled=${kleidiai_build_enabled:-unknown}
+          binary_verification=${binary_verification:-failed}
           {
             echo "mode=$VALIDATION_MODE"
             echo "native_architecture=$architecture"
@@ -561,8 +586,8 @@ jobs:
             echo "runner_ram_bytes=$ram_bytes"
             echo "llama_cpp_release=$LLAMA_RELEASE"
             echo "llama_cpp_commit=$LLAMA_COMMIT"
-            echo "kleidiai_build_enabled=true"
-            echo "binary_verification=passed"
+            echo "kleidiai_build_enabled=$kleidiai_build_enabled"
+            echo "binary_verification=$binary_verification"
             echo "artifact_name=$ARTIFACT_NAME"
             if [[ "$VALIDATION_MODE" == "preflight" ]]; then
               echo "inference_executed=false"
@@ -585,8 +610,8 @@ jobs:
             echo "- Runner CPU count: \`$cpu_count\`"
             echo "- Runner RAM: \`$ram_bytes bytes\`"
             echo "- llama.cpp: \`$LLAMA_RELEASE\` (\`$LLAMA_COMMIT\`)"
-            echo "- KleidiAI build enabled: \`true\`"
-            echo "- Binary verification: passed"
+            echo "- KleidiAI build enabled: \`$kleidiai_build_enabled\`"
+            echo "- Binary verification: \`$binary_verification\`"
             echo "- Artifact: \`$ARTIFACT_NAME\`"
             if [[ "$VALIDATION_MODE" == "preflight" ]]; then
               echo "- No inference executed."
