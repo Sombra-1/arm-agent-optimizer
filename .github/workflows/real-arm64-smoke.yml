@@ -25,13 +25,6 @@ jobs:
     timeout-minutes: 120
     env:
       VALIDATION_MODE: ${{ inputs.mode }}
-      EVIDENCE_DIR: ${{ runner.temp }}/aarchtune-evidence
-      MODEL_DIR: ${{ runner.temp }}/aarchtune-model
-      MODEL_CACHE_DIR: ${{ runner.temp }}/aarchtune-model-cache
-      MODEL_PATH: ${{ runner.temp }}/aarchtune-model/qwen2.5-1.5b-instruct-q4_k_m.gguf
-      OPTIMIZE_DIR: ${{ runner.temp }}/aarchtune-real-arm64-smoke
-      LLAMA_SOURCE_DIR: ${{ runner.temp }}/llama.cpp
-      LLAMA_BUILD_DIR: ${{ runner.temp }}/llama.cpp-build
       LLAMA_REPOSITORY: https://github.com/ggml-org/llama.cpp.git
       LLAMA_RELEASE: b10106
       LLAMA_COMMIT: 1425386fd996511e1f3295e7366c38289a92a271
@@ -42,7 +35,6 @@ jobs:
       MODEL_SIZE_BYTES: "1117320736"
       MODEL_SHA256: 6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e
       MODEL_URL: https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/91cad51170dc346986eccefdc2dd33a9da36ead9/qwen2.5-1.5b-instruct-q4_k_m.gguf
-      HF_HOME: ${{ runner.temp }}/aarchtune-model-cache/huggingface
       ARTIFACT_NAME: ${{ inputs.mode == 'smoke' && format('aarchtune-real-arm64-smoke-{0}-{1}', github.run_id, github.run_attempt) || format('aarchtune-arm64-preflight-{0}-{1}', github.run_id, github.run_attempt) }}
 
     steps:
@@ -50,6 +42,21 @@ jobs:
         uses: actions/checkout@v6
         with:
           persist-credentials: false
+
+      - name: Initialize ephemeral paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "EVIDENCE_DIR=$RUNNER_TEMP/aarchtune-evidence"
+            echo "MODEL_DIR=$RUNNER_TEMP/aarchtune-model"
+            echo "MODEL_CACHE_DIR=$RUNNER_TEMP/aarchtune-model-cache"
+            echo "MODEL_PATH=$RUNNER_TEMP/aarchtune-model/$MODEL_FILENAME"
+            echo "OPTIMIZE_DIR=$RUNNER_TEMP/aarchtune-real-arm64-smoke"
+            echo "LLAMA_SOURCE_DIR=$RUNNER_TEMP/llama.cpp"
+            echo "LLAMA_BUILD_DIR=$RUNNER_TEMP/llama.cpp-build"
+            echo "HF_HOME=$RUNNER_TEMP/aarchtune-model-cache/huggingface"
+          } >> "$GITHUB_ENV"
 
       - name: Prove native Arm64 and collect runner evidence
         shell: bash
