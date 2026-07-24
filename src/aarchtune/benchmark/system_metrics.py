@@ -81,6 +81,7 @@ class ProcessMetricsSampler:
         if self._thread is not None:
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.touch(exist_ok=True)
         self._thread = threading.Thread(
             target=self._run,
             name=f"aarchtune-sampler-{self.pid}",

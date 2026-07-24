@@ -418,7 +418,9 @@ def run_screening(config: ScreeningConfig) -> ScreeningRunResult:
                 error_type="ScreeningArtifactError",
                 error_message="; ".join(validation.errors),
             )
-            raise ScreeningArtifactError("Final screening artifacts failed validation")
+            raise ScreeningArtifactError(
+                "Final screening artifacts failed validation: " + "; ".join(validation.errors)
+            )
         manager.update(status=final_status, stage=final_status)
         final_validation = validate_screening_directory(root)
         if not final_validation.valid:
@@ -428,7 +430,9 @@ def run_screening(config: ScreeningConfig) -> ScreeningRunResult:
                 error_type="ScreeningArtifactError",
                 error_message="; ".join(final_validation.errors),
             )
-            raise ScreeningArtifactError("Final screening manifest failed validation")
+            raise ScreeningArtifactError(
+                "Final screening manifest failed validation: " + "; ".join(final_validation.errors)
+            )
         exit_code: Literal[0, 2, 3] = (
             0
             if final_status is ScreeningStatus.COMPLETED

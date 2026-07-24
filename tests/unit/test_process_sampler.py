@@ -2,14 +2,39 @@ from __future__ import annotations
 
 import os
 import subprocess
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
 import psutil
+import pytest
 
 from aarchtune.benchmark.system_metrics import ProcessMetricsSampler
+
+
+def test_sampler_creates_stream_before_worker_scheduling(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "samples.jsonl"
+    sampler = ProcessMetricsSampler(os.getpid(), path, "run", interval_seconds=0.05)
+    worker_started = threading.Event()
+    release_worker = threading.Event()
+
+    def delayed_worker() -> None:
+        worker_started.set()
+        release_worker.wait(timeout=1.0)
+
+    monkeypatch.setattr(sampler, "_run", delayed_worker)
+    sampler.start()
+    assert worker_started.wait(timeout=1.0)
+    try:
+        assert path.is_file()
+    finally:
+        release_worker.set()
+        sampler.stop()
 
 
 def test_sampler_starts_streams_phase_and_joins(tmp_path: Path) -> None:
