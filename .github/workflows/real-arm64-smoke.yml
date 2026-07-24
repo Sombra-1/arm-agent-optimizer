@@ -1,0 +1,648 @@
+name: Native Arm64 Smoke Validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Validation depth
+        required: true
+        default: preflight
+        type: choice
+        options:
+          - preflight
+          - smoke
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-arm64-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-arm64:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    env:
+      VALIDATION_MODE: ${{ inputs.mode }}
+      EVIDENCE_DIR: ${{ runner.temp }}/aarchtune-evidence
+      MODEL_DIR: ${{ runner.temp }}/aarchtune-model
+      MODEL_CACHE_DIR: ${{ runner.temp }}/aarchtune-model-cache
+      MODEL_PATH: ${{ runner.temp }}/aarchtune-model/qwen2.5-1.5b-instruct-q4_k_m.gguf
+      OPTIMIZE_DIR: ${{ runner.temp }}/aarchtune-real-arm64-smoke
+      LLAMA_SOURCE_DIR: ${{ runner.temp }}/llama.cpp
+      LLAMA_BUILD_DIR: ${{ runner.temp }}/llama.cpp-build
+      LLAMA_REPOSITORY: https://github.com/ggml-org/llama.cpp.git
+      LLAMA_RELEASE: b10106
+      LLAMA_COMMIT: 1425386fd996511e1f3295e7366c38289a92a271
+      MODEL_REPOSITORY: Qwen/Qwen2.5-1.5B-Instruct-GGUF
+      MODEL_REVISION: 91cad51170dc346986eccefdc2dd33a9da36ead9
+      MODEL_FILENAME: qwen2.5-1.5b-instruct-q4_k_m.gguf
+      MODEL_LICENSE: Apache-2.0
+      MODEL_SIZE_BYTES: "1117320736"
+      MODEL_SHA256: 6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e
+      MODEL_URL: https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/91cad51170dc346986eccefdc2dd33a9da36ead9/qwen2.5-1.5b-instruct-q4_k_m.gguf
+      HF_HOME: ${{ runner.temp }}/aarchtune-model-cache/huggingface
+      ARTIFACT_NAME: ${{ inputs.mode == 'smoke' && format('aarchtune-real-arm64-smoke-{0}-{1}', github.run_id, github.run_attempt) || format('aarchtune-arm64-preflight-{0}-{1}', github.run_id, github.run_attempt) }}
+
+    steps:
+      - name: Check out AArchTune
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Prove native Arm64 and collect runner evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p \
+            "$EVIDENCE_DIR/runner" \
+            "$EVIDENCE_DIR/llama-build" \
+            "$EVIDENCE_DIR/versions" \
+            "$EVIDENCE_DIR/checksums"
+
+          architecture=$(uname -m)
+          case "$architecture" in
+            aarch64|arm64) ;;
+            *)
+              echo "Refusing non-native runner architecture: $architecture" >&2
+              exit 1
+              ;;
+          esac
+
+          uname -a > "$EVIDENCE_DIR/runner/uname-a.txt"
+          uname -m > "$EVIDENCE_DIR/runner/uname-m.txt"
+          uname -r > "$EVIDENCE_DIR/runner/uname-r.txt"
+          lscpu > "$EVIDENCE_DIR/runner/lscpu.txt"
+          lscpu --json > "$EVIDENCE_DIR/runner/lscpu.json"
+          nproc > "$EVIDENCE_DIR/runner/nproc.txt"
+          free -h > "$EVIDENCE_DIR/runner/free-h.txt"
+          free -b > "$EVIDENCE_DIR/runner/free-b.txt"
+          df -h > "$EVIDENCE_DIR/runner/df-h-before.txt"
+          cat /etc/os-release > "$EVIDENCE_DIR/runner/os-release.txt"
+          awk -F: '
+            /^(processor|model name|Features|CPU implementer|CPU architecture|CPU variant|CPU part|CPU revision|Hardware)[[:space:]]*:/ {
+              gsub(/[[:space:]]+$/, "", $1)
+              print
+            }
+          ' /proc/cpuinfo > "$EVIDENCE_DIR/runner/cpuinfo-relevant.txt"
+          {
+            for item in online offline possible present; do
+              path="/sys/devices/system/cpu/$item"
+              if [[ -r "$path" ]]; then
+                printf '%s=' "$item"
+                cat "$path"
+              fi
+            done
+            for item in \
+              /sys/devices/system/cpu/cpu0/topology/core_id \
+              /sys/devices/system/cpu/cpu0/topology/physical_package_id \
+              /sys/devices/system/cpu/cpu0/topology/thread_siblings_list; do
+              if [[ -r "$item" ]]; then
+                printf '%s=' "${item##*/}"
+                cat "$item"
+              fi
+            done
+          } > "$EVIDENCE_DIR/runner/cpu-sysfs-summary.txt"
+          if command -v numactl >/dev/null 2>&1; then
+            numactl --hardware > "$EVIDENCE_DIR/runner/numa.txt"
+          else
+            lscpu | grep -E '^NUMA' > "$EVIDENCE_DIR/runner/numa.txt" || true
+          fi
+          cat > "$EVIDENCE_DIR/runner/classification.txt" <<'EOF'
+          Native GitHub-hosted Linux Arm64 runner
+          Not emulation
+          Ephemeral shared benchmark environment
+          Not a dedicated production server
+          EOF
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install minimal build dependencies and AArchTune
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential \
+            ca-certificates \
+            cmake \
+            curl \
+            git \
+            jq \
+            ninja-build
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          {
+            python --version
+            aarchtune --version
+            cmake --version | head -1
+            ninja --version
+            git --version
+            curl --version | head -1
+            cc --version | head -1
+            c++ --version | head -1
+          } > "$EVIDENCE_DIR/versions/toolchain.txt" 2>&1
+          aarchtune --help > "$EVIDENCE_DIR/versions/aarchtune-help.txt"
+
+      - name: Fetch pinned official llama.cpp source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$LLAMA_SOURCE_DIR"
+          git -C "$LLAMA_SOURCE_DIR" init
+          git -C "$LLAMA_SOURCE_DIR" remote add upstream "$LLAMA_REPOSITORY"
+          git -C "$LLAMA_SOURCE_DIR" fetch --depth 1 upstream "$LLAMA_COMMIT"
+          git -C "$LLAMA_SOURCE_DIR" checkout --detach FETCH_HEAD
+          actual_commit=$(git -C "$LLAMA_SOURCE_DIR" rev-parse HEAD)
+          [[ "$actual_commit" == "$LLAMA_COMMIT" ]]
+          git -C "$LLAMA_SOURCE_DIR" describe --tags --exact-match HEAD |
+            grep -Fx "$LLAMA_RELEASE"
+          grep -q 'option(GGML_CPU_KLEIDIAI' "$LLAMA_SOURCE_DIR/ggml/CMakeLists.txt"
+          grep -q 'set(TARGET llama-server)' "$LLAMA_SOURCE_DIR/tools/server/CMakeLists.txt"
+          grep -q 'set(TARGET llama-bench)' "$LLAMA_SOURCE_DIR/tools/llama-bench/CMakeLists.txt"
+          grep -q 'set(TARGET llama-cli)' "$LLAMA_SOURCE_DIR/tools/cli/CMakeLists.txt"
+          {
+            echo "upstream_repository=$LLAMA_REPOSITORY"
+            echo "release=$LLAMA_RELEASE"
+            echo "commit=$actual_commit"
+            echo "date_selected=2026-07-24"
+            echo "resolution_command=gh api repos/ggml-org/llama.cpp/releases/latest"
+          } > "$EVIDENCE_DIR/llama-build/source.txt"
+
+      - name: Build native KleidiAI llama.cpp targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          df -h > "$EVIDENCE_DIR/llama-build/disk-before.txt"
+          configuration=(
+            cmake
+            -S "$LLAMA_SOURCE_DIR"
+            -B "$LLAMA_BUILD_DIR"
+            -G Ninja
+            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+            -DGGML_CPU=ON
+            -DGGML_CPU_KLEIDIAI=ON
+            -DGGML_NATIVE=ON
+            -DGGML_CUDA=OFF
+            -DGGML_VULKAN=OFF
+            -DGGML_METAL=OFF
+            -DGGML_RPC=OFF
+            -DGGML_BUILD_TESTS=OFF
+            -DGGML_BUILD_EXAMPLES=OFF
+            -DLLAMA_BUILD_TESTS=OFF
+            -DLLAMA_BUILD_EXAMPLES=OFF
+            -DLLAMA_BUILD_TOOLS=ON
+            -DLLAMA_BUILD_SERVER=ON
+            -DLLAMA_BUILD_UI=OFF
+            -DLLAMA_BUILD_APP=OFF
+          )
+          printf '%q ' "${configuration[@]}" > "$EVIDENCE_DIR/llama-build/cmake-command.txt"
+          printf '\n' >> "$EVIDENCE_DIR/llama-build/cmake-command.txt"
+          echo "started=$(date --utc --iso-8601=seconds)" > "$EVIDENCE_DIR/llama-build/status.txt"
+          "${configuration[@]}" 2>&1 | tee "$EVIDENCE_DIR/llama-build/cmake-configure.log"
+          grep -Eq '^GGML_CPU_KLEIDIAI:BOOL=ON$' "$LLAMA_BUILD_DIR/CMakeCache.txt"
+          grep -q 'GGML_USE_CPU_KLEIDIAI' "$LLAMA_BUILD_DIR/compile_commands.json"
+          cmake --build "$LLAMA_BUILD_DIR" \
+            --target llama-server llama-bench llama-cli \
+            --parallel "$(nproc)" 2>&1 |
+            tee "$EVIDENCE_DIR/llama-build/build.log"
+          {
+            echo "finished=$(date --utc --iso-8601=seconds)"
+            echo "status=success"
+            echo "kleidiai_build_enabled=true"
+          } >> "$EVIDENCE_DIR/llama-build/status.txt"
+
+          for binary in llama-server llama-bench llama-cli; do
+            path="$LLAMA_BUILD_DIR/bin/$binary"
+            [[ -x "$path" ]]
+            printf '%s=%s\n' "$binary" "$path" >> "$EVIDENCE_DIR/llama-build/binary-paths.txt"
+            "$path" --version > "$EVIDENCE_DIR/versions/$binary.txt" 2>&1
+            sha256sum "$path" >> "$EVIDENCE_DIR/checksums/llama-binaries.sha256"
+          done
+          grep -q "${LLAMA_COMMIT:0:7}" "$EVIDENCE_DIR/versions/llama-server.txt"
+          df -h > "$EVIDENCE_DIR/llama-build/disk-after.txt"
+          du -sh "$LLAMA_SOURCE_DIR" "$LLAMA_BUILD_DIR" \
+            > "$EVIDENCE_DIR/llama-build/disk-usage.txt"
+          echo "$LLAMA_BUILD_DIR/bin" >> "$GITHUB_PATH"
+          echo "AARCHTUNE_LLAMA_SERVER=$LLAMA_BUILD_DIR/bin/llama-server" >> "$GITHUB_ENV"
+          echo "AARCHTUNE_LLAMA_BENCH=$LLAMA_BUILD_DIR/bin/llama-bench" >> "$GITHUB_ENV"
+
+      - name: Run AArchTune doctor
+        shell: bash
+        run: |
+          set -euo pipefail
+          aarchtune doctor \
+            --output "$EVIDENCE_DIR/hardware-report.json" \
+            > "$EVIDENCE_DIR/versions/aarchtune-doctor.txt"
+          jq -e '.architecture == "aarch64" and .is_arm64 == true' \
+            "$EVIDENCE_DIR/hardware-report.json"
+
+      - name: Validate five-task smoke workload
+        if: inputs.mode == 'smoke'
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ $(grep -cve '^[[:space:]]*$' workloads/smoke-test.jsonl) -eq 5 ]]
+          aarchtune workload validate workloads/smoke-test.jsonl \
+            --json \
+            --output "$EVIDENCE_DIR/workload-validation.json"
+          sha256sum workloads/smoke-test.jsonl \
+            > "$EVIDENCE_DIR/checksums/workload.sha256"
+
+      - name: Download and verify pinned Qwen model
+        if: inputs.mode == 'smoke'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$MODEL_DIR" "$MODEL_CACHE_DIR"
+          curl \
+            --fail \
+            --location \
+            --retry 3 \
+            --retry-all-errors \
+            --connect-timeout 30 \
+            --max-time 1200 \
+            --output "$MODEL_PATH" \
+            "$MODEL_URL"
+          [[ -s "$MODEL_PATH" ]]
+          actual_size=$(stat -c '%s' "$MODEL_PATH")
+          [[ "$actual_size" -eq "$MODEL_SIZE_BYTES" ]]
+          [[ "$actual_size" -gt 1000000000 && "$actual_size" -lt 2000000000 ]]
+          echo "$MODEL_SHA256  $MODEL_PATH" | sha256sum --check -
+          actual_sha=$(sha256sum "$MODEL_PATH" | awk '{print $1}')
+          jq -n \
+            --arg repository "$MODEL_REPOSITORY" \
+            --arg revision "$MODEL_REVISION" \
+            --arg filename "$MODEL_FILENAME" \
+            --arg quantization "Q4_K_M" \
+            --arg license "$MODEL_LICENSE" \
+            --arg sha256 "$actual_sha" \
+            --argjson size_bytes "$actual_size" \
+            '{
+              repository: $repository,
+              revision: $revision,
+              filename: $filename,
+              quantization: $quantization,
+              license: $license,
+              size_bytes: $size_bytes,
+              sha256: $sha256,
+              download_authenticated: false,
+              verified: true
+            }' > "$EVIDENCE_DIR/model-provenance.json"
+          printf '%s  %s\n' "$actual_sha" "$MODEL_FILENAME" \
+            > "$EVIDENCE_DIR/checksums/model.sha256"
+
+      - name: Probe real model loading on CPU
+        if: inputs.mode == 'smoke'
+        shell: bash
+        run: |
+          set -euo pipefail
+          probe_stdout="$RUNNER_TEMP/llama-cli-probe.stdout"
+          probe_stderr="$RUNNER_TEMP/llama-cli-probe.stderr"
+          setsid timeout --signal=TERM --kill-after=15s 180s \
+            "$LLAMA_BUILD_DIR/bin/llama-cli" \
+            --model "$MODEL_PATH" \
+            --prompt 'Return only the word OK.' \
+            --n-predict 8 \
+            --seed 42 \
+            --temp 0 \
+            --n-gpu-layers 0 \
+            > "$probe_stdout" 2> "$probe_stderr" &
+          probe_pid=$!
+          echo "$probe_pid" > "$RUNNER_TEMP/aarchtune-probe.pgid"
+          set +e
+          wait "$probe_pid"
+          probe_exit=$?
+          set -e
+          [[ "$probe_exit" -eq 0 ]]
+
+          sed "s#${RUNNER_TEMP}#\\$RUNNER_TEMP#g" "$probe_stderr" |
+            grep -Ei 'CPU_KLEIDIAI|KleidiAI|load_backend|system_info|model loader' |
+            head -200 > "$EVIDENCE_DIR/llama-build/runtime-provenance.txt" || true
+          if grep -Eiq 'CPU_KLEIDIAI|KleidiAI' "$probe_stderr"; then
+            kleidiai_status=verified
+          else
+            kleidiai_status=unknown
+          fi
+          {
+            echo "probe_exit_code=$probe_exit"
+            echo "model_loaded=true"
+            echo "cpu_backend_requested=true"
+            echo "kleidiai_runtime_evidence=$kleidiai_status"
+            echo "generated_text_published=false"
+          } > "$EVIDENCE_DIR/llama-build/runtime-status.txt"
+          echo "KLEIDIAI_RUNTIME_STATUS=$kleidiai_status" >> "$GITHUB_ENV"
+          rm -f "$probe_stdout" "$probe_stderr"
+
+      - name: Run real AArchTune smoke optimization
+        if: inputs.mode == 'smoke'
+        shell: bash
+        run: |
+          set -euo pipefail
+          setsid aarchtune optimize \
+            --server-binary "$LLAMA_BUILD_DIR/bin/llama-server" \
+            --bench-binary "$LLAMA_BUILD_DIR/bin/llama-bench" \
+            --model "$MODEL_PATH" \
+            --workload workloads/smoke-test.jsonl \
+            --goal balanced \
+            --output-dir "$OPTIMIZE_DIR" \
+            --baseline-repetitions 2 \
+            --evaluation-repetitions 2 \
+            --warmup-requests 1 \
+            --advance-count 4 \
+            --maximum-total-duration 5400 \
+            --json \
+            > "$RUNNER_TEMP/aarchtune-optimize.stdout" \
+            2> "$RUNNER_TEMP/aarchtune-optimize.stderr" &
+          optimize_pid=$!
+          echo "$optimize_pid" > "$RUNNER_TEMP/aarchtune-optimize.pgid"
+          set +e
+          wait "$optimize_pid"
+          optimize_exit=$?
+          set -e
+          echo "OPTIMIZE_EXIT=$optimize_exit" >> "$GITHUB_ENV"
+          echo "$optimize_exit" > "$EVIDENCE_DIR/optimize-exit-code.txt"
+          case "$optimize_exit" in
+            0|3|4) ;;
+            *)
+              echo "Unexpected AArchTune failure (exit $optimize_exit)." >&2
+              sed -n '1,200p' "$RUNNER_TEMP/aarchtune-optimize.stderr" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Validate native optimization evidence
+        if: inputs.mode == 'smoke' && always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -d "$OPTIMIZE_DIR/final" ]]
+          mkdir -p "$EVIDENCE_DIR/validation"
+          aarchtune optimize validate "$OPTIMIZE_DIR" --json |
+            tee "$EVIDENCE_DIR/validation/optimize.json"
+          aarchtune finalize validate "$OPTIMIZE_DIR/final" --json |
+            tee "$EVIDENCE_DIR/validation/finalize.json"
+          aarchtune passport verify \
+            "$OPTIMIZE_DIR/final/optimization-passport.json" --json |
+            tee "$EVIDENCE_DIR/validation/passport.json"
+
+          passport="$OPTIMIZE_DIR/final/optimization-passport.json"
+          report="$OPTIMIZE_DIR/final/report-data.json"
+          manifest="$OPTIMIZE_DIR/optimize-manifest.json"
+          expected_workload_sha=$(sha256sum workloads/smoke-test.jsonl | awk '{print $1}')
+          jq -e \
+            --arg model_sha "$MODEL_SHA256" \
+            --arg workload_sha "$expected_workload_sha" \
+            --arg short_commit "${LLAMA_COMMIT:0:7}" \
+            '
+              .synthetic == false and
+              (.hardware.fingerprint.architecture == "aarch64") and
+              (.hardware.fingerprint.is_arm64 == true) and
+              (.runtime.fingerprint.version | contains($short_commit)) and
+              (.model.sha256 == $model_sha) and
+              (.workload.sha256 == $workload_sha)
+            ' "$passport"
+          jq -e \
+            '.owned_processes_stopped == true and .samplers_stopped == true' \
+            "$manifest"
+          jq -e '.synthetic == false' "$report"
+          if grep -q 'SYNTHETIC TEST EVIDENCE' "$OPTIMIZE_DIR/final/report.html"; then
+            echo "Synthetic banner found in a real run report." >&2
+            exit 1
+          fi
+
+      - name: Prepare reviewed public evidence
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$EVIDENCE_DIR/limitations-readme.txt" <<'EOF'
+          This evidence comes from one native Arm64 smoke run on an ephemeral,
+          shared GitHub-hosted runner. It is not a dedicated-server benchmark,
+          is not a repeatability study, and is insufficient for final median
+          performance claims. Model weights and raw model responses are excluded.
+          EOF
+
+          if [[ "$VALIDATION_MODE" == "smoke" && -d "$OPTIMIZE_DIR/final" ]]; then
+            mkdir -p "$EVIDENCE_DIR/optimization/final"
+            cp -a "$OPTIMIZE_DIR/final/." "$EVIDENCE_DIR/optimization/final/"
+
+            while IFS= read -r relative; do
+              [[ "$relative" != /* ]]
+              [[ "$relative" != *raw-attempts* ]]
+              [[ "$relative" != *request-metrics* ]]
+              [[ "$relative" != *process-samples* ]]
+              [[ "$relative" != *server.log* ]]
+              source_path="$OPTIMIZE_DIR/final/$relative"
+              destination="$EVIDENCE_DIR/optimization/final/$relative"
+              [[ -f "$source_path" ]]
+              mkdir -p "$(dirname "$destination")"
+              cp "$source_path" "$destination"
+            done < <(
+              jq -r '.stage_artifact_hashes[].path' \
+                "$OPTIMIZE_DIR/final/optimization-passport.json"
+            )
+
+            jq '{
+              optimize_id,
+              status,
+              active_stage,
+              owned_processes_stopped,
+              samplers_stopped
+            }' "$OPTIMIZE_DIR/optimize-manifest.json" \
+              > "$EVIDENCE_DIR/optimization-cleanup.json"
+
+            report="$OPTIMIZE_DIR/final/report-data.json"
+            baseline_id=$(jq -r '.baseline_candidate_id' "$report")
+            selected_id=$(jq -r '.selected_candidate_id // .baseline_candidate_id' "$report")
+            bundle_id=$(jq -r '.bundle_id' "$OPTIMIZE_DIR/final/bundle-manifest.json")
+            jq \
+              --arg baseline_id "$baseline_id" \
+              --arg selected_id "$selected_id" \
+              --arg bundle_id "$bundle_id" \
+              --arg optimize_exit "${OPTIMIZE_EXIT:-unavailable}" \
+              --arg kleidiai "${KLEIDIAI_RUNTIME_STATUS:-unknown}" \
+              '{
+                optimize_exit_code: $optimize_exit,
+                outcome,
+                baseline_profile: $baseline_id,
+                selected_or_retained_profile: $selected_id,
+                baseline: (.candidates[] | select(.id == $baseline_id)),
+                selected_or_retained: (.candidates[] | select(.id == $selected_id)),
+                drift,
+                bundle_id: $bundle_id
+              } + {
+                passport_id: .passport_id,
+                kleidiai_runtime_evidence: $kleidiai,
+                synthetic: .synthetic,
+                limitations: .limitations
+              }' "$report" > "$EVIDENCE_DIR/smoke-summary.json"
+            jq -r '.bundle_id' "$OPTIMIZE_DIR/final/bundle-manifest.json" \
+              > "$EVIDENCE_DIR/bundle-id.txt"
+            jq -r '.passport_id' "$OPTIMIZE_DIR/final/optimization-passport.json" \
+              > "$EVIDENCE_DIR/passport-id.txt"
+          fi
+
+      - name: Clean up workflow-owned processes and model
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          cleanup_ok=true
+          for pgid_file in \
+            "$RUNNER_TEMP/aarchtune-probe.pgid" \
+            "$RUNNER_TEMP/aarchtune-optimize.pgid"; do
+            [[ -f "$pgid_file" ]] || continue
+            pgid=$(<"$pgid_file")
+            [[ "$pgid" =~ ^[0-9]+$ ]]
+            if kill -0 -- "-$pgid" 2>/dev/null; then
+              kill -TERM -- "-$pgid"
+              for _ in {1..20}; do
+                kill -0 -- "-$pgid" 2>/dev/null || break
+                sleep 0.5
+              done
+            fi
+            if kill -0 -- "-$pgid" 2>/dev/null; then
+              kill -KILL -- "-$pgid"
+            fi
+            if ps -eo pgid=,comm= | awk -v owned="$pgid" '
+              $1 == owned && ($2 == "llama-server" || $2 == "llama-bench" || $2 ~ /aarchtune/) {
+                found=1
+              }
+              END { exit found ? 0 : 1 }
+            '; then
+              cleanup_ok=false
+            fi
+          done
+          rm -f "$MODEL_PATH"
+          rm -rf "$MODEL_DIR" "$MODEL_CACHE_DIR"
+          [[ ! -e "$MODEL_PATH" ]]
+          [[ ! -d "$MODEL_CACHE_DIR" ]]
+          {
+            echo "tracked_process_groups_stopped=$cleanup_ok"
+            echo "model_deleted=true"
+            echo "model_cache_deleted=true"
+            echo "cleanup_complete=$cleanup_ok"
+          } > "$EVIDENCE_DIR/cleanup-proof.txt"
+          df -h > "$EVIDENCE_DIR/runner/df-h-final.txt"
+          [[ "$cleanup_ok" == true ]]
+
+      - name: Write workflow summary and scan public evidence
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          architecture=$(cat "$EVIDENCE_DIR/runner/uname-m.txt")
+          cpu_count=$(cat "$EVIDENCE_DIR/runner/nproc.txt")
+          ram_bytes=$(awk '/^Mem:/ {print $2}' "$EVIDENCE_DIR/runner/free-b.txt")
+          {
+            echo "mode=$VALIDATION_MODE"
+            echo "native_architecture=$architecture"
+            echo "runner_cpu_count=$cpu_count"
+            echo "runner_ram_bytes=$ram_bytes"
+            echo "llama_cpp_release=$LLAMA_RELEASE"
+            echo "llama_cpp_commit=$LLAMA_COMMIT"
+            echo "kleidiai_build_enabled=true"
+            echo "binary_verification=passed"
+            echo "artifact_name=$ARTIFACT_NAME"
+            if [[ "$VALIDATION_MODE" == "preflight" ]]; then
+              echo "inference_executed=false"
+            else
+              echo "model=$MODEL_REPOSITORY/$MODEL_FILENAME"
+              echo "model_license=$MODEL_LICENSE"
+              echo "model_sha256=$MODEL_SHA256"
+              echo "kleidiai_runtime_evidence=${KLEIDIAI_RUNTIME_STATUS:-unknown}"
+              echo "workload=workloads/smoke-test.jsonl"
+              echo "optimize_exit_code=${OPTIMIZE_EXIT:-unavailable}"
+            fi
+            echo "limitation=One native Arm64 smoke run on an ephemeral shared runner; not a dedicated-server benchmark or repeatability study."
+          } > "$EVIDENCE_DIR/workflow-summary.txt"
+
+          {
+            echo "## Native Arm64 Smoke Validation"
+            echo
+            echo "- Mode: \`$VALIDATION_MODE\`"
+            echo "- Native architecture: \`$architecture\`"
+            echo "- Runner CPU count: \`$cpu_count\`"
+            echo "- Runner RAM: \`$ram_bytes bytes\`"
+            echo "- llama.cpp: \`$LLAMA_RELEASE\` (\`$LLAMA_COMMIT\`)"
+            echo "- KleidiAI build enabled: \`true\`"
+            echo "- Binary verification: passed"
+            echo "- Artifact: \`$ARTIFACT_NAME\`"
+            if [[ "$VALIDATION_MODE" == "preflight" ]]; then
+              echo "- No inference executed."
+            elif [[ -f "$EVIDENCE_DIR/smoke-summary.json" ]]; then
+              jq -r '
+                "- Model: `Qwen2.5-1.5B-Instruct Q4_K_M`",
+                "- Model license: `Apache-2.0`",
+                "- Model SHA verification: passed",
+                "- KleidiAI runtime evidence: `" + .kleidiai_runtime_evidence + "`",
+                "- Workload: `workloads/smoke-test.jsonl` (five tasks)",
+                "- Optimization outcome: `" + .outcome + "` (exit " + .optimize_exit_code + ")",
+                "- Baseline profile: `" + .baseline_profile + "`",
+                "- Selected/retained profile: `" + .selected_or_retained_profile + "`",
+                "- Sequential service rate (baseline → selected): `" +
+                  ((.baseline.requests_per_minute // "unavailable") | tostring) + " → " +
+                  ((.selected_or_retained.requests_per_minute // "unavailable") | tostring) + " requests/min`",
+                "- Median latency (baseline → selected): `" +
+                  ((.baseline.median_latency_seconds // "unavailable") | tostring) + " → " +
+                  ((.selected_or_retained.median_latency_seconds // "unavailable") | tostring) + " s`",
+                "- P95 latency (baseline → selected): `" +
+                  ((.baseline.p95_latency_seconds // "unavailable") | tostring) + " → " +
+                  ((.selected_or_retained.p95_latency_seconds // "unavailable") | tostring) + " s`",
+                "- Peak RSS (baseline → selected): `" +
+                  ((.baseline.peak_rss_bytes // "unavailable") | tostring) + " → " +
+                  ((.selected_or_retained.peak_rss_bytes // "unavailable") | tostring) + " bytes`",
+                "- Task success: `" + ((.selected_or_retained.task_success_rate // "unavailable") | tostring) + "`",
+                "- JSON validity: `" + ((.selected_or_retained.json_validity_rate // "unavailable") | tostring) + "`",
+                "- Validator pass rate: `" + ((.selected_or_retained.validator_pass_rate // "unavailable") | tostring) + "`",
+                "- Drift status: `" + .drift.classification + "`",
+                "- Passport ID: `" + .passport_id + "`"
+              ' "$EVIDENCE_DIR/smoke-summary.json"
+              echo "- Bundle ID: \`$(cat "$EVIDENCE_DIR/bundle-id.txt")\`"
+            else
+              echo "- Smoke evidence was unavailable because an earlier step failed."
+            fi
+            echo
+            echo "This is one native Arm64 smoke run on an ephemeral GitHub-hosted runner."
+            echo "It is not a dedicated-server benchmark and is not yet a repeatability study."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          scan_pattern='Authorization:|Bearer|ghp_|github_pat_|BEGIN OPENSSH PRIVATE KEY|BEGIN PRIVATE KEY|/home/ayx|raw_response|response_body'
+          if grep -RInE "$scan_pattern" "$EVIDENCE_DIR" \
+            > "$RUNNER_TEMP/aarchtune-artifact-scan.txt"; then
+            echo "Forbidden artifact content found:" >&2
+            sed -n '1,200p' "$RUNNER_TEMP/aarchtune-artifact-scan.txt" >&2
+            exit 1
+          fi
+          if find "$EVIDENCE_DIR" -type f \
+            \( -name '*.gguf' -o -name 'raw-attempts.jsonl' \
+               -o -name 'request-metrics.jsonl' -o -name 'process-samples.jsonl' \
+               -o -name 'server.log' \) | grep -q .; then
+            echo "Forbidden model or raw runtime artifact found." >&2
+            exit 1
+          fi
+          echo "forbidden_content_matches=0" > "$EVIDENCE_DIR/privacy-scan.txt"
+
+      - name: Upload sanitized native Arm64 evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ env.EVIDENCE_DIR }}
+          retention-days: 14
+          if-no-files-found: error
+          include-hidden-files: false
+
+      - name: Preserve diagnostic optimize outcome
+        if: inputs.mode == 'smoke' && always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          exit "${OPTIMIZE_EXIT:-1}"

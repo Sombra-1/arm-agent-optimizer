@@ -76,6 +76,8 @@ Quality gates combine absolute floors, permitted percentage-point regression fro
 
 `aarchtune doctor` detects AArch64, ASIMD, DotProd, I8MM, SVE, SME, cores, memory, NUMA, runtime flags, and conservative KleidiAI evidence. KleidiAI is never marked verified merely because the machine is Arm64. See [Arm optimization](docs/arm-optimization.md) and [real Arm runbook](docs/real-arm-validation-runbook.md).
 
+For users without physical Arm hardware, see the [native GitHub Actions Arm64 validation workflow](docs/github-actions-arm64-validation.md).
+
 ## Generated outputs
 
 The final bundle contains a self-contained report, Optimization Passport, Pareto frontier, selected configuration, capability-proven command, safe local run script, reproduction script, checksums, and either a Compose artifact or an explicit unavailable-status file.
