@@ -336,7 +336,9 @@ jobs:
           sed "s#${RUNNER_TEMP}#\\$RUNNER_TEMP#g" "$probe_stderr" |
             grep -Ei 'CPU_KLEIDIAI|KleidiAI|load_backend|system_info|model loader' |
             head -200 > "$EVIDENCE_DIR/llama-build/runtime-provenance.txt" || true
-          if grep -Eiq 'CPU_KLEIDIAI|KleidiAI' "$probe_stderr"; then
+          if grep -Eiq \
+            'CPU_KLEIDIAI|KleidiAI[^[:alnum:]]*(backend|enabled|active|loaded|in use|available)[^[:alnum:]]*(true|yes|on|1)?' \
+            "$probe_stderr"; then
             kleidiai_status=verified
           else
             kleidiai_status=unknown
