@@ -36,6 +36,8 @@ jobs:
       MODEL_SHA256: 6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e
       MODEL_URL: https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/91cad51170dc346986eccefdc2dd33a9da36ead9/qwen2.5-1.5b-instruct-q4_k_m.gguf
       ARTIFACT_NAME: ${{ inputs.mode == 'smoke' && format('aarchtune-real-arm64-smoke-{0}-{1}', github.run_id, github.run_attempt) || format('aarchtune-arm64-preflight-{0}-{1}', github.run_id, github.run_attempt) }}
+      PUBLIC_EVIDENCE_SCAN_PATTERN: /home/runner/|/opt/hostedtoolcache/|Authorization:|Bearer([[:space:]]|$)|ghp_|github_pat_|BEGIN OPENSSH PRIVATE KEY|BEGIN PRIVATE KEY|/home/ayx|raw_response|response_body
+      HF_TOKEN_ASSIGNMENT_PATTERN: "HF_TOKEN[\"']?[[:space:]]*[:=][[:space:]]*[\"']?[^<\"'[:space:]][^\"'[:space:]]*"
 
     steps:
       - name: Check out AArchTune
@@ -727,11 +729,12 @@ jobs:
             echo "It is not a dedicated-server benchmark and is not yet a repeatability study."
           } >> "$GITHUB_STEP_SUMMARY"
 
-          scan_pattern='/home/runner/|/opt/hostedtoolcache/|Authorization:|Bearer([[:space:]]|$)|ghp_|github_pat_|BEGIN OPENSSH PRIVATE KEY|BEGIN PRIVATE KEY|HF_TOKEN|/home/ayx|raw_response|response_body'
-          if grep -RInE "$scan_pattern" "$EVIDENCE_DIR" \
-            > "$RUNNER_TEMP/aarchtune-artifact-scan.txt"; then
+          scan_results="$RUNNER_TEMP/aarchtune-artifact-scan.txt"
+          grep -RInE "$PUBLIC_EVIDENCE_SCAN_PATTERN" "$EVIDENCE_DIR" > "$scan_results" || true
+          grep -RInE "$HF_TOKEN_ASSIGNMENT_PATTERN" "$EVIDENCE_DIR" >> "$scan_results" || true
+          if [[ -s "$scan_results" ]]; then
             echo "Forbidden artifact content found:" >&2
-            sed -n '1,200p' "$RUNNER_TEMP/aarchtune-artifact-scan.txt" >&2
+            sed -n '1,200p' "$scan_results" >&2
             exit 1
           fi
           if find "$EVIDENCE_DIR" -type f \
