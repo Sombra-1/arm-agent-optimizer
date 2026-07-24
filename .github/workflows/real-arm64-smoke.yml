@@ -459,6 +459,20 @@ jobs:
             exit 1
           fi
 
+      - name: Collect sanitized screening diagnostics
+        if: inputs.mode == 'smoke' && always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/collect_screening_diagnostics.py collect \
+            --runner-temp "$RUNNER_TEMP" \
+            --llama-build-dir "$LLAMA_BUILD_DIR" \
+            --llama-source-dir "$LLAMA_SOURCE_DIR" \
+            --model-path "$MODEL_PATH" \
+            --model-dir "$MODEL_DIR" \
+            --optimize-dir "$OPTIMIZE_DIR" \
+            --evidence-dir "$EVIDENCE_DIR"
+
       - name: Prepare reviewed public evidence
         if: always()
         shell: bash
@@ -585,6 +599,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          python scripts/collect_screening_diagnostics.py redact-tree \
+            --runner-temp "$RUNNER_TEMP" \
+            --llama-build-dir "$LLAMA_BUILD_DIR" \
+            --llama-source-dir "$LLAMA_SOURCE_DIR" \
+            --model-path "$MODEL_PATH" \
+            --model-dir "$MODEL_DIR" \
+            --optimize-dir "$OPTIMIZE_DIR" \
+            --root "$EVIDENCE_DIR"
+
           architecture=$(cat "$EVIDENCE_DIR/runner/uname-m.txt")
           cpu_count=$(cat "$EVIDENCE_DIR/runner/nproc.txt")
           ram_bytes=$(awk '/^Mem:/ {print $2}' "$EVIDENCE_DIR/runner/free-b.txt")
@@ -666,12 +689,45 @@ jobs:
             else
               echo "- Smoke evidence was unavailable because an earlier step failed."
             fi
+            diagnostic_summary="$EVIDENCE_DIR/screening-diagnostics/diagnostic-summary.json"
+            if [[ "$VALIDATION_MODE" == "smoke" && -f "$diagnostic_summary" ]]; then
+              echo
+              echo "### Screening diagnostics"
+              jq -r '
+                def value:
+                  if . == null then "unavailable" else tostring end;
+                def counts:
+                  if . == null then
+                    "unavailable"
+                  else
+                    to_entries |
+                    map(.key + "=" + (if .value == null then "unavailable" else (.value | tostring) end)) |
+                    join(", ")
+                  end;
+                "- Screening status: `" + (.status | value) + "`; stage: `" + (.stage | value) + "`",
+                "- Invocations expected/completed/failed: `" +
+                  (.expected_invocations | value) + "/" +
+                  (.completed_invocations | value) + "/" +
+                  (.failed_invocations | value) + "`",
+                "- Signatures successful/partial/failed: `" +
+                  (.successful_signatures | value) + "/" +
+                  (.partial_signatures | value) + "/" +
+                  (.failed_signatures | value) + "`",
+                "- Advanced candidates: `" + (.advanced_candidates | value) + "`",
+                "- Failure-code counts: `" + (.failure_codes | counts) + "`",
+                "- Exit-code counts: `" + (.execution_exit_codes | counts) + "`",
+                "- Numeric mmap commands true/false: `" +
+                  (.mmap_command_forms.numeric_true | value) + "/" +
+                  (.mmap_command_forms.numeric_false | value) + "`",
+                "- Diagnostic artifact path: `screening-diagnostics/`"
+              ' "$diagnostic_summary"
+            fi
             echo
             echo "This is one native Arm64 smoke run on an ephemeral GitHub-hosted runner."
             echo "It is not a dedicated-server benchmark and is not yet a repeatability study."
           } >> "$GITHUB_STEP_SUMMARY"
 
-          scan_pattern='Authorization:|Bearer|ghp_|github_pat_|BEGIN OPENSSH PRIVATE KEY|BEGIN PRIVATE KEY|/home/ayx|raw_response|response_body'
+          scan_pattern='/home/runner/|/opt/hostedtoolcache/|Authorization:|Bearer([[:space:]]|$)|ghp_|github_pat_|BEGIN OPENSSH PRIVATE KEY|BEGIN PRIVATE KEY|HF_TOKEN|/home/ayx|raw_response|response_body'
           if grep -RInE "$scan_pattern" "$EVIDENCE_DIR" \
             > "$RUNNER_TEMP/aarchtune-artifact-scan.txt"; then
             echo "Forbidden artifact content found:" >&2
@@ -681,7 +737,9 @@ jobs:
           if find "$EVIDENCE_DIR" -type f \
             \( -name '*.gguf' -o -name 'raw-attempts.jsonl' \
                -o -name 'request-metrics.jsonl' -o -name 'process-samples.jsonl' \
-               -o -name 'server.log' \) | grep -q .; then
+               -o -name 'server.log' -o -name 'stderr.log' \
+               -o -name 'stdout.json' -o -name 'stdout.jsonl' \
+               -o -name 'stdout.csv' -o -name 'stdout.md' \) | grep -q .; then
             echo "Forbidden model or raw runtime artifact found." >&2
             exit 1
           fi
