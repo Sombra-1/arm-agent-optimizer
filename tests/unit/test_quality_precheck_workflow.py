@@ -12,6 +12,7 @@ import yaml
 
 from aarchtune.baseline.models import BaselineRunConfig
 from aarchtune.baseline.runner import run_baseline
+from aarchtune.runtime.config import ResponseFormatMode
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github/workflows/native-arm64-quality-precheck.yml"
@@ -38,6 +39,7 @@ def _baseline(
     fake_model: Path,
     *,
     scenario: str = "healthy-with-timings",
+    response_format_mode: ResponseFormatMode = ResponseFormatMode.NONE,
 ) -> Path:
     output = tmp_path / scenario
     result = run_baseline(
@@ -48,6 +50,7 @@ def _baseline(
             output_dir=output,
             repetitions=2,
             warmup_requests=1,
+            response_format_mode=response_format_mode,
             request_timeout_seconds=0.5,
             startup_timeout_seconds=2.0,
             shutdown_timeout_seconds=0.5,
@@ -94,6 +97,29 @@ def test_model_profiles_are_allowlisted_immutable_and_exact() -> None:
         helper.get_model_profile("arbitrary/repository")
 
 
+def test_output_contracts_are_allowlisted_and_dispatch_is_typed() -> None:
+    helper = _helper()
+    workflow = _workflow()
+    dispatch = workflow["on"]["workflow_dispatch"]["inputs"]["output_contract"]
+    assert dispatch == {
+        "description": "Output contract",
+        "required": "true",
+        "type": "choice",
+        "default": "prompt_only",
+        "options": ["prompt_only", "json_object"],
+    }
+    assert helper.output_contract_environment("prompt_only") == {
+        "OUTPUT_CONTRACT": "prompt_only",
+        "RESPONSE_FORMAT_MODE": "none",
+    }
+    assert helper.output_contract_environment("json_object") == {
+        "OUTPUT_CONTRACT": "json_object",
+        "RESPONSE_FORMAT_MODE": "json_object",
+    }
+    with pytest.raises(ValueError, match="not allowlisted"):
+        helper.output_contract_environment('{"type":"json_schema"}')
+
+
 def test_model_size_and_sha_mismatches_fail(tmp_path: Path) -> None:
     helper = _helper()
     model = tmp_path / "model.gguf"
@@ -123,6 +149,48 @@ def test_existing_policy_passes_complete_synthetic_baseline(
     assert '"response_text"' not in serialized
     assert '"server_fields"' not in serialized
     assert '"observed"' not in serialized
+    assert '"response_format_mode": "none"' in serialized
+    assert '"response_format_applied": false' in serialized
+    assert '"messages"' not in serialized
+
+
+def test_json_object_provenance_is_sanitized_without_request_bodies(
+    tmp_path: Path, fake_binary: Path, fake_model: Path
+) -> None:
+    helper = _helper()
+    baseline = _baseline(
+        tmp_path,
+        fake_binary,
+        fake_model,
+        response_format_mode=ResponseFormatMode.JSON_OBJECT,
+    )
+    public = tmp_path / "public-json"
+    outcome = helper.sanitize_baseline(baseline, POLICY, public, "json_object")
+    assert outcome == "quality_policy_passed"
+    quality = json.loads((public / "quality-policy-outcome.json").read_text())
+    assert quality["aggregate"]["output_contract"] == "json_object"
+    assert quality["aggregate"]["response_format_mode"] == "json_object"
+    assert quality["aggregate"]["response_format_applied"] is True
+    assert quality["aggregate"]["response_format_type"] == "json_object"
+    assert quality["interpretation"]["response_format_accepted"] is True
+    provenance = json.loads((public / "request-provenance.json").read_text())
+    assert provenance["measured_request_count"] == 10
+    assert provenance["temperature_values"] == [0.0]
+    assert provenance["seed_values"] == [42]
+    assert provenance["stream_values"] == [False]
+    assert provenance["response_format_applied_count"] == 10
+    assert provenance["response_format_type_values"] == ["json_object"]
+    assert provenance["max_tokens_by_task"] == {
+        "smoke-contradiction-001": [100],
+        "smoke-incident-001": [120],
+        "smoke-planning-001": [140],
+        "smoke-recovery-001": [100],
+        "smoke-summary-001": [160],
+    }
+    serialized = " ".join(path.read_text() for path in public.iterdir())
+    assert '"messages"' not in serialized
+    assert '"response_text"' not in serialized
+    assert '"server_fields"' not in serialized
 
 
 def test_missing_attempt_is_incomplete_not_pass(
@@ -138,6 +206,31 @@ def test_missing_attempt_is_incomplete_not_pass(
     report = json.loads((public / "quality-policy-outcome.json").read_text())
     assert outcome == "quality_evidence_incomplete"
     assert report["evidence_errors"]
+
+
+def test_mismatched_measured_contract_is_incomplete_not_pass(
+    tmp_path: Path, fake_binary: Path, fake_model: Path
+) -> None:
+    helper = _helper()
+    baseline = _baseline(
+        tmp_path,
+        fake_binary,
+        fake_model,
+        response_format_mode=ResponseFormatMode.JSON_OBJECT,
+    )
+    metrics = baseline / "request-metrics.jsonl"
+    records = metrics.read_text(encoding="utf-8").splitlines()
+    first = json.loads(records[0])
+    first["request"]["response_format_mode"] = "none"
+    first["request"]["response_format_applied"] = False
+    first["request"]["response_format_type"] = None
+    records[0] = json.dumps(first)
+    metrics.write_text("\n".join(records) + "\n", encoding="utf-8")
+    public = tmp_path / "mismatched-public"
+    outcome = helper.sanitize_baseline(baseline, POLICY, public, "json_object")
+    report = json.loads((public / "quality-policy-outcome.json").read_text())
+    assert outcome == "quality_evidence_incomplete"
+    assert "a measured request used the wrong response-format contract" in report["evidence_errors"]
 
 
 def test_failed_validators_are_preserved_without_response_content(
@@ -220,7 +313,11 @@ def test_workflow_is_baseline_only_and_cleanup_always_runs() -> None:
     assert "raw-attempts.jsonl" in text
     assert "retention-days: 14" in text
     assert "resource_incompatible" in text
-    assert "response_format" not in text
+    assert "response_format_unsupported" in text
+    assert '--response-format "$RESPONSE_FORMAT_MODE"' in text
+    assert 'if (response_type == "json_object")' in text
+    assert 'json_schema = json_value(response_format, "schema", json::object());' in text
+    assert "params.grammar = json_schema_to_grammar" in text
     assert "--grammar" not in text
     assert "--json-schema" not in text
     assert "pkill" not in text
@@ -312,6 +409,7 @@ def test_historical_comparison_is_labelled_and_not_combined(tmp_path: Path) -> N
     output = tmp_path / "comparison.json"
     helper.write_comparison_summary(
         "qwen2.5-14b-q3-k-m",
+        "json_object",
         quality,
         output,
         123,
@@ -320,10 +418,15 @@ def test_historical_comparison_is_labelled_and_not_combined(tmp_path: Path) -> N
     assert comparison["benchmark"] is False
     assert comparison["statistical_combination"] is False
     assert comparison["current"]["task_success_rate"] == 0.6
+    assert comparison["current"]["output_contract"] == "json_object"
     assert [item["task_success_rate"] for item in comparison["historical_references"]] == [
         0.0,
         0.4,
+        0.4,
     ]
+    assert all(
+        item["output_contract"] == "prompt_only" for item in comparison["historical_references"]
+    )
     assert all(
         item["source"] == "separate earlier native run"
         for item in comparison["historical_references"]

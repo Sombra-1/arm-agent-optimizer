@@ -22,6 +22,7 @@ EXPECTED_ATTEMPTS = EXPECTED_TASKS * EXPECTED_REPETITIONS
 HISTORICAL_QUALITY_REFERENCES = (
     {
         "model_label": "Qwen2.5-1.5B-Instruct Q4_K_M",
+        "output_contract": "prompt_only",
         "source": "separate earlier native run",
         "request_success_rate": 1.0,
         "task_success_rate": 0.0,
@@ -30,6 +31,16 @@ HISTORICAL_QUALITY_REFERENCES = (
     },
     {
         "model_label": "Qwen2.5-7B-Instruct Q3_K_M",
+        "output_contract": "prompt_only",
+        "source": "separate earlier native run",
+        "request_success_rate": 1.0,
+        "task_success_rate": 0.4,
+        "json_validity_rate": 0.8,
+        "validator_pass_rate": 0.72,
+    },
+    {
+        "model_label": "Qwen2.5-14B-Instruct Q3_K_M",
+        "output_contract": "prompt_only",
         "source": "separate earlier native run",
         "request_success_rate": 1.0,
         "task_success_rate": 0.4,
@@ -81,6 +92,19 @@ MODEL_PROFILES = {
     ),
 }
 
+OUTPUT_CONTRACTS = {
+    "prompt_only": {
+        "response_format_mode": "none",
+        "response_format_applied": False,
+        "response_format_type": None,
+    },
+    "json_object": {
+        "response_format_mode": "json_object",
+        "response_format_applied": True,
+        "response_format_type": "json_object",
+    },
+}
+
 _CLASSIFICATION_ORDER = (
     "request_failed",
     "timeout",
@@ -120,6 +144,19 @@ def profile_environment(name: str) -> dict[str, str]:
         "MODEL_SIZE_BYTES": str(profile.size_bytes),
         "MODEL_SHA256": profile.sha256,
         "MODEL_URL": profile.url,
+    }
+
+
+def output_contract_environment(name: str) -> dict[str, str]:
+    """Return the fixed request-provenance mapping for one allowlisted contract."""
+
+    try:
+        contract = OUTPUT_CONTRACTS[name]
+    except KeyError as error:
+        raise ValueError(f"output contract is not allowlisted: {name}") from error
+    return {
+        "OUTPUT_CONTRACT": name,
+        "RESPONSE_FORMAT_MODE": str(contract["response_format_mode"]),
     }
 
 
@@ -224,6 +261,8 @@ def _evidence_errors(
     baseline_dir: Path,
     summary: BaselineSummary,
     records: list[dict[str, Any]],
+    measurements: list[dict[str, Any]],
+    output_contract: str,
     minimum_fraction: float,
     minimum_repetitions: int,
 ) -> list[str]:
@@ -247,6 +286,8 @@ def _evidence_errors(
         errors.append("repetitions per task are below the existing quality policy")
     if len(records) != EXPECTED_ATTEMPTS:
         errors.append("raw validation record count is not 10")
+    if len(measurements) != EXPECTED_ATTEMPTS:
+        errors.append("request provenance record count is not 10")
     attempt_ids = [item.get("attempt_id") for item in records]
     if len(set(attempt_ids)) != len(attempt_ids):
         errors.append("attempt IDs are not unique")
@@ -255,6 +296,27 @@ def _evidence_errors(
         count != EXPECTED_REPETITIONS for count in task_counts.values()
     ):
         errors.append("per-task repetition evidence is incomplete")
+    expected_contract = OUTPUT_CONTRACTS[output_contract]
+    execution = summary.execution
+    if (
+        execution.response_format_mode.value != expected_contract["response_format_mode"]
+        or execution.response_format_applied is not expected_contract["response_format_applied"]
+        or execution.response_format_type != expected_contract["response_format_type"]
+    ):
+        errors.append("baseline response-format provenance does not match the selected contract")
+    for measurement in measurements:
+        request = measurement.get("request")
+        if not isinstance(request, dict):
+            errors.append("measured request provenance is missing")
+            break
+        if (
+            request.get("response_format_mode") != expected_contract["response_format_mode"]
+            or request.get("response_format_applied")
+            is not expected_contract["response_format_applied"]
+            or request.get("response_format_type") != expected_contract["response_format_type"]
+        ):
+            errors.append("a measured request used the wrong response-format contract")
+            break
     return errors
 
 
@@ -262,10 +324,13 @@ def sanitize_baseline(
     baseline_dir: Path,
     policy_path: Path,
     output_dir: Path,
+    output_contract: str = "prompt_only",
 ) -> str:
     """Validate, classify, and write only response-free quality evidence."""
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    if output_contract not in OUTPUT_CONTRACTS:
+        raise ValueError(f"output contract is not allowlisted: {output_contract}")
     policy_source = load_quality_policy(policy_path)
     summary = BaselineSummary.model_validate_json(
         (baseline_dir / "baseline-summary.json").read_text(encoding="utf-8")
@@ -280,17 +345,32 @@ def sanitize_baseline(
     ]
     if not all(isinstance(record, dict) for record in records):
         raise ValueError("raw validation evidence must contain JSON objects")
+    measurements = [
+        json.loads(line)
+        for line in (baseline_dir / "request-metrics.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line
+    ]
+    if not all(isinstance(measurement, dict) for measurement in measurements):
+        raise ValueError("request provenance evidence must contain JSON objects")
 
     policy = policy_source.policy
     evidence_errors = _evidence_errors(
         baseline_dir,
         summary,
         records,
+        measurements,
+        output_contract,
         policy.minimum_evidence.completed_attempt_fraction,
         policy.minimum_evidence.repetitions_per_task,
     )
     quality = summary.quality
     aggregate = {
+        "output_contract": output_contract,
+        "response_format_mode": summary.execution.response_format_mode.value,
+        "response_format_applied": summary.execution.response_format_applied,
+        "response_format_type": summary.execution.response_format_type,
         "configured_attempts": summary.benchmark.total_configured_attempts,
         "completed_attempts": summary.benchmark.measured_attempts_completed,
         "completed_attempt_fraction": (
@@ -357,6 +437,90 @@ def sanitize_baseline(
         "completed_attempt_count": manifest.completed_attempt_count,
         "server_stopped": manifest.server_stopped,
         "sampler_stopped": manifest.sampler_stopped,
+        "output_contract": output_contract,
+        "response_format_mode": summary.execution.response_format_mode.value,
+        "response_format_applied": summary.execution.response_format_applied,
+        "response_format_type": summary.execution.response_format_type,
+    }
+    request_generation_provenance = {
+        "measured_request_count": len(measurements),
+        "temperature_values": sorted(
+            {
+                request.get("temperature")
+                for measurement in measurements
+                if isinstance((request := measurement.get("request")), dict)
+            }
+        ),
+        "seed_values": sorted(
+            {
+                request.get("seed")
+                for measurement in measurements
+                if isinstance((request := measurement.get("request")), dict)
+            }
+        ),
+        "stream_values": sorted(
+            {
+                request.get("stream")
+                for measurement in measurements
+                if isinstance((request := measurement.get("request")), dict)
+            }
+        ),
+        "max_tokens_by_task": {
+            task_id: sorted(
+                {
+                    request.get("max_tokens")
+                    for measurement in measurements
+                    if measurement.get("task_id") == task_id
+                    and isinstance((request := measurement.get("request")), dict)
+                }
+            )
+            for task_id in sorted(
+                {
+                    str(measurement.get("task_id"))
+                    for measurement in measurements
+                    if measurement.get("task_id") is not None
+                }
+            )
+        },
+        "response_format_applied_count": sum(
+            request.get("response_format_applied") is True
+            for measurement in measurements
+            if isinstance((request := measurement.get("request")), dict)
+        ),
+        "response_format_type_values": sorted(
+            {
+                request.get("response_format_type")
+                for measurement in measurements
+                if isinstance((request := measurement.get("request")), dict)
+                and request.get("response_format_type") is not None
+            }
+        ),
+    }
+    failed_validator_names = {
+        str(item.get("validator"))
+        for record in records
+        for item in _validator_results(record)
+        if item.get("passed") is False
+    }
+    interpretation = {
+        "response_format_accepted": not evidence_errors
+        and summary.execution.response_format_applied,
+        "serialization_improved": (
+            quality.json_validity_rate is not None and quality.json_validity_rate > 0.8
+        ),
+        "semantic_quality_improved": (
+            (
+                quality.task_attempt_success_rate is not None
+                and quality.task_attempt_success_rate > 0.4
+            )
+            or (quality.validator_pass_rate is not None and quality.validator_pass_rate > 0.72)
+        ),
+        "malformed_json_disappeared": quality.json_validity_rate == 1.0,
+        "semantic_exact_value_failures_remain": bool(
+            {"exact_value", "allowed_value"} & failed_validator_names
+        ),
+        "schema_failures_remain": bool({"json_schema", "required_fields"} & failed_validator_names),
+        "policy_passed": outcome == "quality_policy_passed",
     }
     policy_outcome = {
         "outcome": outcome,
@@ -364,6 +528,7 @@ def sanitize_baseline(
         "aggregate": aggregate,
         "evidence_errors": evidence_errors,
         "failed_policy_checks": sorted(set(metric_failures)),
+        "interpretation": interpretation,
         "thresholds": {
             "absolute_minimums": policy.absolute_minimums.model_dump(mode="json"),
             "maximums": policy.maximums.model_dump(mode="json"),
@@ -379,6 +544,10 @@ def sanitize_baseline(
         json.dumps(aggregate, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+    (output_dir / "request-provenance.json").write_text(
+        json.dumps(request_generation_provenance, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     (output_dir / "per-task-classifications.json").write_text(
         json.dumps(per_task, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -392,6 +561,7 @@ def sanitize_baseline(
 
 def write_comparison_summary(
     profile_name: str,
+    output_contract: str,
     quality_outcome_path: Path,
     output_path: Path,
     duration_seconds: int,
@@ -399,6 +569,8 @@ def write_comparison_summary(
     """Write current metrics beside clearly separate historical references."""
 
     profile = get_model_profile(profile_name)
+    if output_contract not in OUTPUT_CONTRACTS:
+        raise ValueError(f"output contract is not allowlisted: {output_contract}")
     outcome = _load_json(quality_outcome_path)
     aggregate = outcome.get("aggregate")
     current = {
@@ -406,6 +578,7 @@ def write_comparison_summary(
         "model_label": f"Qwen2.5-{profile.parameter_class}-Instruct {profile.quantization}",
         "parameter_class": profile.parameter_class,
         "quantization": profile.quantization,
+        "output_contract": output_contract,
         "policy_result": outcome.get("outcome"),
         "duration_seconds": duration_seconds,
     }
@@ -442,13 +615,21 @@ def _parser() -> argparse.ArgumentParser:
     sanitize.add_argument("--baseline-dir", type=Path, required=True)
     sanitize.add_argument("--policy", type=Path, required=True)
     sanitize.add_argument("--output-dir", type=Path, required=True)
+    sanitize.add_argument(
+        "--output-contract",
+        choices=tuple(OUTPUT_CONTRACTS),
+        default="prompt_only",
+    )
     resolve = subparsers.add_parser("resolve-profile")
     resolve.add_argument("--profile", required=True)
+    contract = subparsers.add_parser("resolve-contract")
+    contract.add_argument("--contract", required=True)
     probe = subparsers.add_parser("classify-probe")
     probe.add_argument("--exit-code", type=int, required=True)
     probe.add_argument("--stderr", type=Path, required=True)
     comparison = subparsers.add_parser("comparison")
     comparison.add_argument("--profile", required=True)
+    comparison.add_argument("--output-contract", required=True)
     comparison.add_argument("--quality-outcome", type=Path, required=True)
     comparison.add_argument("--output", type=Path, required=True)
     comparison.add_argument("--duration-seconds", type=int, required=True)
@@ -464,6 +645,10 @@ def main() -> int:
         for key, value in profile_environment(args.profile).items():
             print(f"{key}={value}")
         return 0
+    if args.command == "resolve-contract":
+        for key, value in output_contract_environment(args.contract).items():
+            print(f"{key}={value}")
+        return 0
     if args.command == "classify-probe":
         classification, outcome = classify_probe_result(
             args.exit_code,
@@ -474,12 +659,18 @@ def main() -> int:
     if args.command == "comparison":
         write_comparison_summary(
             args.profile,
+            args.output_contract,
             args.quality_outcome,
             args.output,
             args.duration_seconds,
         )
         return 0
-    outcome = sanitize_baseline(args.baseline_dir, args.policy, args.output_dir)
+    outcome = sanitize_baseline(
+        args.baseline_dir,
+        args.policy,
+        args.output_dir,
+        args.output_contract,
+    )
     print(outcome)
     return 0
 

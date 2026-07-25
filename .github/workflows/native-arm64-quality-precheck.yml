@@ -11,6 +11,14 @@ on:
         options:
           - qwen2.5-14b-q3-k-m
           - qwen2.5-7b-q3-k-m
+      output_contract:
+        description: Output contract
+        required: true
+        type: choice
+        default: prompt_only
+        options:
+          - prompt_only
+          - json_object
 
 permissions:
   contents: read
@@ -28,6 +36,7 @@ jobs:
       LLAMA_RELEASE: b10106
       LLAMA_COMMIT: 1425386fd996511e1f3295e7366c38289a92a271
       MODEL_PROFILE: ${{ inputs.model_profile }}
+      OUTPUT_CONTRACT: ${{ inputs.output_contract }}
       DISK_SAFETY_MARGIN_BYTES: "4294967296"
       ARTIFACT_NAME: aarchtune-arm64-quality-precheck-${{ github.run_id }}-${{ github.run_attempt }}
       PUBLIC_EVIDENCE_SCAN_PATTERN: /home/runner/|/opt/hostedtoolcache/|/home/ayx/|/tmp/|Authorization:|Bearer[[:space:]]+[^<[:space:]][^[:space:]]*|ghp_|github_pat_|BEGIN OPENSSH PRIVATE KEY|BEGIN PRIVATE KEY|raw_response|raw-response|response_body
@@ -115,6 +124,8 @@ jobs:
           profile_environment="$RUNNER_TEMP/model-profile.env"
           python scripts/quality_precheck.py resolve-profile \
             --profile "$MODEL_PROFILE" > "$profile_environment"
+          python scripts/quality_precheck.py resolve-contract \
+            --contract "$OUTPUT_CONTRACT" >> "$profile_environment"
           cat "$profile_environment" >> "$GITHUB_ENV"
           source "$profile_environment"
           echo "MODEL_PATH=$MODEL_DIR/$MODEL_FILENAME" >> "$GITHUB_ENV"
@@ -139,6 +150,30 @@ jobs:
           [[ "$tag_commit" == "$LLAMA_COMMIT" ]]
           grep -q 'option(GGML_CPU_KLEIDIAI' "$LLAMA_SOURCE_DIR/ggml/CMakeLists.txt"
           grep -Rqs 'LLM_ARCH_QWEN2' "$LLAMA_SOURCE_DIR/src"
+          if [[ "$OUTPUT_CONTRACT" == json_object ]]; then
+            server_common="$LLAMA_SOURCE_DIR/tools/server/server-common.cpp"
+            chat_source="$LLAMA_SOURCE_DIR/common/chat.cpp"
+            grep -Fq 'if (response_type == "json_object")' "$server_common"
+            grep -Fq 'json_schema = json_value(response_format, "schema", json::object());' \
+              "$server_common"
+            grep -Fq 'params.grammar = json_schema_to_grammar(json::parse(inputs.json_schema));' \
+              "$chat_source"
+            grep -Fq 'bool use_jinja = true;' "$LLAMA_SOURCE_DIR/common/common.h"
+            grep -Fq 'POST `/v1/chat/completions`' "$LLAMA_SOURCE_DIR/tools/server/README.md"
+            grep -Fq '({"type": "json_object"}, 10' \
+              "$LLAMA_SOURCE_DIR/tools/server/tests/unit/test_chat_completion.py"
+            {
+              echo "source_commit=$LLAMA_COMMIT"
+              echo "endpoint=/v1/chat/completions"
+              echo "plain_json_object_recognized=true"
+              echo "schema_required=false"
+              echo "converted_to_json_grammar=true"
+              echo "pinned_server_test_expected_status=http_200"
+              echo "unsupported_signal=http_400_or_422"
+              echo "jinja_flag_explicit=false"
+              echo "jinja_effective_default=true"
+            } > "$EVIDENCE_DIR/llama-build/response-format-compatibility.txt"
+          fi
           {
             echo "upstream_repository=$LLAMA_REPOSITORY"
             echo "release=$LLAMA_RELEASE"
@@ -295,6 +330,11 @@ jobs:
           [[ $(basename "$MODEL_PATH") == "$MODEL_FILENAME" ]]
           grep -aFq 'general.architecture' "$MODEL_PATH"
           grep -aFq 'tokenizer.chat_template' "$MODEL_PATH"
+          grep -aFq '<|im_start|>' "$MODEL_PATH"
+          thinking_markers_present=false
+          if grep -aFq '<think>' "$MODEL_PATH"; then
+            thinking_markers_present=true
+          fi
           disk_available_after=$(
             df -B1 --output=avail "$RUNNER_TEMP" | tail -n 1 | tr -d ' '
           )
@@ -312,6 +352,7 @@ jobs:
             --arg license "$MODEL_LICENSE" \
             --arg parameter_class "$MODEL_PARAMETER_CLASS" \
             --arg sha256 "$MODEL_SHA256" \
+            --argjson thinking_markers_present "$thinking_markers_present" \
             --argjson size_bytes "$MODEL_SIZE_BYTES" \
             '{
               profile: $profile,
@@ -324,6 +365,7 @@ jobs:
               size_bytes: $size_bytes,
               sha256: $sha256,
               native_chat_template_present: true,
+              thinking_markers_present: $thinking_markers_present,
               verified: true
             }' > "$EVIDENCE_DIR/model-provenance.json"
 
@@ -408,6 +450,7 @@ jobs:
             --output-dir "$BASELINE_DIR" \
             --repetitions 2 \
             --warmup-requests 1 \
+            --response-format "$RESPONSE_FORMAT_MODE" \
             --mmap \
             --request-timeout 60 \
             --startup-timeout 120 \
@@ -433,11 +476,29 @@ jobs:
           if [[ "${PRECHECK_OUTCOME:-quality_evidence_incomplete}" == resource_incompatible ]]; then
             jq -n \
               --arg outcome resource_incompatible \
+              --arg output_contract "$OUTPUT_CONTRACT" \
               --arg reason "Pinned model is incompatible with available runner resources" \
               '{
                 outcome: $outcome,
                 aggregate: null,
+                output_contract: $output_contract,
                 evidence_errors: [$reason],
+                failed_policy_checks: []
+              }' > "$quality_dir/quality-policy-outcome.json"
+            printf '[]\n' > "$quality_dir/per-task-classifications.json"
+          elif [[ -f "$BASELINE_DIR/failure.json" ]] \
+            && jq -e '.error_type == "ResponseFormatUnsupportedError"' \
+              "$BASELINE_DIR/failure.json" > /dev/null; then
+            jq -n \
+              --arg outcome response_format_unsupported \
+              --arg output_contract "$OUTPUT_CONTRACT" \
+              '{
+                outcome: $outcome,
+                aggregate: null,
+                output_contract: $output_contract,
+                response_format_applied: true,
+                response_format_type: "json_object",
+                evidence_errors: ["Pinned server rejected the selected response format"],
                 failed_policy_checks: []
               }' > "$quality_dir/quality-policy-outcome.json"
             printf '[]\n' > "$quality_dir/per-task-classifications.json"
@@ -449,6 +510,7 @@ jobs:
               --baseline-dir "$BASELINE_DIR" \
               --policy configs/default-quality-policy.yaml \
               --output-dir "$quality_dir" \
+              --output-contract "$OUTPUT_CONTRACT" \
               > "$RUNNER_TEMP/quality-outcome.txt"
             sanitize_exit=$?
             set -e
@@ -459,10 +521,12 @@ jobs:
           if [[ ! -f "$quality_dir/quality-policy-outcome.json" ]]; then
             jq -n \
               --arg outcome "${PRECHECK_OUTCOME:-quality_evidence_incomplete}" \
+              --arg output_contract "$OUTPUT_CONTRACT" \
               --arg reason "Baseline did not produce complete schema-valid evidence" \
               '{
                 outcome: $outcome,
                 aggregate: null,
+                output_contract: $output_contract,
                 evidence_errors: [$reason],
                 failed_policy_checks: []
               }' > "$quality_dir/quality-policy-outcome.json"
@@ -551,6 +615,7 @@ jobs:
           duration_seconds=$((ended_epoch - PRECHECK_STARTED_EPOCH))
           python scripts/quality_precheck.py comparison \
             --profile "$MODEL_PROFILE" \
+            --output-contract "$OUTPUT_CONTRACT" \
             --quality-outcome "$EVIDENCE_DIR/quality/quality-policy-outcome.json" \
             --output "$EVIDENCE_DIR/comparison-summary.json" \
             --duration-seconds "$duration_seconds"
@@ -561,6 +626,10 @@ jobs:
             echo "llama_cpp_release=$LLAMA_RELEASE"
             echo "llama_cpp_commit=$LLAMA_COMMIT"
             echo "model_profile=$MODEL_PROFILE"
+            echo "output_contract=$OUTPUT_CONTRACT"
+            echo "response_format_mode=$RESPONSE_FORMAT_MODE"
+            echo "response_format_applied=$([[ $OUTPUT_CONTRACT == json_object ]] && echo true || echo false)"
+            echo "response_format_type=$([[ $OUTPUT_CONTRACT == json_object ]] && echo json_object || echo none)"
             echo "model=$MODEL_REPOSITORY/$MODEL_FILENAME"
             echo "model_revision=$MODEL_REVISION"
             echo "model_quantization=$MODEL_QUANTIZATION"
@@ -571,6 +640,8 @@ jobs:
             echo "kleidiai_build_enabled=true"
             echo "kleidiai_runtime_evidence=${KLEIDIAI_RUNTIME_STATUS:-unknown}"
             echo "configured_attempts=10"
+            echo "measured_attempts=$(jq -r '.aggregate.completed_attempts // 0' "$EVIDENCE_DIR/quality/quality-policy-outcome.json")"
+            echo "warmup_requests=1"
             echo "quality_outcome=$outcome"
             echo "duration_seconds=$duration_seconds"
             echo "screening_executed=false"
@@ -584,6 +655,7 @@ jobs:
             echo
             echo "- Architecture: \`$(cat "$EVIDENCE_DIR/runner/uname-m.txt" 2>/dev/null || echo unavailable)\`"
             echo "- Model profile: \`$MODEL_PROFILE\`"
+            echo "- Output contract: \`$OUTPUT_CONTRACT\`"
             echo "- Model: \`Qwen2.5-$MODEL_PARAMETER_CLASS-Instruct $MODEL_QUANTIZATION\`"
             echo "- Quality outcome: \`$outcome\`"
             echo "- Duration: \`$duration_seconds seconds\`"
@@ -659,7 +731,7 @@ jobs:
             jq -r '.outcome' "$EVIDENCE_DIR/quality/quality-policy-outcome.json"
           )
           case "$outcome" in
-            quality_policy_passed|quality_policy_failed|quality_evidence_incomplete|resource_incompatible) ;;
+            quality_policy_passed|quality_policy_failed|quality_evidence_incomplete|resource_incompatible|response_format_unsupported) ;;
             *) exit 1 ;;
           esac
           [[ "$outcome" == "quality_policy_passed" ]]
