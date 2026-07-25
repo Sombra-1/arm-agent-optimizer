@@ -53,6 +53,17 @@ class ProcessStartError(RuntimeManagementError):
     """Popen failed before a child process was owned."""
 
 
+class ResponseFormatUnsupportedError(RuntimeManagementError):
+    """The server rejected an explicitly requested response format."""
+
+    def __init__(self, status_code: int) -> None:
+        self.status_code = status_code
+        super().__init__(
+            "response_format_unsupported: llama-server rejected the json_object "
+            f"response format with HTTP {status_code}"
+        )
+
+
 class ServerExitedError(RuntimeManagementError):
     """The owned process exited before readiness."""
 

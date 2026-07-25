@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -11,6 +12,13 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 _ENVIRONMENT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+class ResponseFormatMode(StrEnum):
+    """Allowlisted response constraints for chat-completion requests."""
+
+    NONE = "none"
+    JSON_OBJECT = "json_object"
 
 
 class LlamaServerConfig(BaseModel):
@@ -32,6 +40,7 @@ class LlamaServerConfig(BaseModel):
     metrics_enabled: bool = False
     prompt_cache: bool = False
     mmap: bool = True
+    response_format_mode: ResponseFormatMode = ResponseFormatMode.NONE
     numa_mode: Literal["disabled", "distribute", "isolate", "numactl"] = "disabled"
     startup_timeout_seconds: Annotated[float, Field(ge=0.1, le=600.0)] = 30.0
     request_timeout_seconds: Annotated[float, Field(ge=0.1, le=600.0)] = 60.0

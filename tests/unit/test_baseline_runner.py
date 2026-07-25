@@ -10,6 +10,7 @@ import pytest
 
 from aarchtune.baseline.models import BaselineRunConfig, RunStatus
 from aarchtune.baseline.runner import hash_file_streaming, run_baseline
+from aarchtune.runtime.config import ResponseFormatMode
 
 
 def _workload() -> Path:
@@ -24,6 +25,7 @@ def _config(
     scenario: str = "healthy-with-timings",
     repetitions: int = 1,
     warmup: int = 1,
+    response_format_mode: ResponseFormatMode = ResponseFormatMode.NONE,
     **environment: str,
 ) -> BaselineRunConfig:
     fake_environment = {"FAKE_LLAMA_SCENARIO": scenario, **environment}
@@ -34,6 +36,7 @@ def _config(
         output_dir=tmp_path / scenario,
         repetitions=repetitions,
         warmup_requests=warmup,
+        response_format_mode=response_format_mode,
         request_timeout_seconds=0.15,
         startup_timeout_seconds=2.0,
         shutdown_timeout_seconds=0.2,
@@ -101,6 +104,59 @@ def test_warmup_is_excluded_and_task_order_is_deterministic(
         "smoke-recovery-001",
         "smoke-summary-001",
     ]
+
+
+def test_json_object_contract_applies_to_warmup_and_every_measured_request(
+    tmp_path: Path, fake_binary: Path, fake_model: Path
+) -> None:
+    requests_file = tmp_path / "requests.jsonl"
+    result = run_baseline(
+        _config(
+            tmp_path,
+            fake_binary,
+            fake_model,
+            repetitions=2,
+            warmup=1,
+            response_format_mode=ResponseFormatMode.JSON_OBJECT,
+            FAKE_LLAMA_REQUESTS_FILE=str(requests_file),
+        )
+    )
+
+    assert result.status is RunStatus.COMPLETED
+    assert result.summary is not None
+    requests = _jsonl(requests_file)
+    assert len(requests) == 11
+    assert all(item["response_format"] == {"type": "json_object"} for item in requests)
+    assert len(_jsonl(result.output_dir / "raw-attempts.jsonl")) == 10
+    assert len(_jsonl(result.output_dir / "request-metrics.jsonl")) == 10
+    assert result.summary.execution.warmup_request_count == 1
+    assert result.summary.execution.response_format_mode == ResponseFormatMode.JSON_OBJECT
+    assert result.summary.execution.response_format_applied is True
+    assert result.summary.execution.response_format_type == "json_object"
+    measurements = _jsonl(result.output_dir / "request-metrics.jsonl")
+    assert all(item["request"]["response_format_mode"] == "json_object" for item in measurements)
+    assert all(item["request"]["response_format_applied"] is True for item in measurements)
+    assert all(item["request"]["response_format_type"] == "json_object" for item in measurements)
+
+
+def test_response_format_rejection_is_not_a_quality_policy_result(
+    tmp_path: Path, fake_binary: Path, fake_model: Path
+) -> None:
+    result = run_baseline(
+        _config(
+            tmp_path,
+            fake_binary,
+            fake_model,
+            scenario="response-format-unsupported",
+            response_format_mode=ResponseFormatMode.JSON_OBJECT,
+        )
+    )
+    assert result.status is RunStatus.FAILED
+    assert result.summary is None
+    assert result.failure is not None
+    assert result.failure.error_type == "ResponseFormatUnsupportedError"
+    assert "response_format_unsupported" in result.failure.message
+    assert result.failure.completed_attempt_count == 0
 
 
 def test_missing_timing_fields_stay_unavailable(

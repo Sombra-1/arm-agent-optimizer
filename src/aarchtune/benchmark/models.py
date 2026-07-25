@@ -7,6 +7,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
+from aarchtune.runtime.config import ResponseFormatMode
 from aarchtune.workload.schema import TaskEvaluationResult, ValidatorType
 
 
@@ -47,6 +48,9 @@ class RequestDescription(BenchmarkModel):
     max_tokens: int
     seed: int | None
     stream: Literal[False] = False
+    response_format_mode: ResponseFormatMode = ResponseFormatMode.NONE
+    response_format_applied: bool = False
+    response_format_type: Literal["json_object"] | None = None
 
 
 class ExecutionResult(BenchmarkModel):

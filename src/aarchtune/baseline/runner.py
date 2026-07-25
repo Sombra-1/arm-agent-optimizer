@@ -113,6 +113,7 @@ def _runtime_config(config: BaselineRunConfig) -> LlamaServerConfig:
         parallel_slots=config.parallel_slots,
         prompt_cache=config.prompt_cache,
         mmap=config.mmap,
+        response_format_mode=config.response_format_mode,
         request_timeout_seconds=config.request_timeout_seconds,
         startup_timeout_seconds=config.startup_timeout_seconds,
         shutdown_timeout_seconds=config.shutdown_timeout_seconds,
@@ -207,6 +208,11 @@ def run_baseline(config: BaselineRunConfig) -> BaselineRunResult:
         warmup_task_ids=[],
         warmup_success=[],
         measured_repetitions=config.repetitions,
+        response_format_mode=config.response_format_mode,
+        response_format_applied=config.response_format_mode.value == "json_object",
+        response_format_type=(
+            "json_object" if config.response_format_mode.value == "json_object" else None
+        ),
         request_timeout_seconds=config.request_timeout_seconds,
         startup_timeout_seconds=config.startup_timeout_seconds,
         process_sampling_interval_seconds=config.sample_interval_seconds,

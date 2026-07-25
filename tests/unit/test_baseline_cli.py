@@ -56,6 +56,40 @@ def test_baseline_json_output(tmp_path: Path, fake_binary: Path, fake_model: Pat
     payload = json.loads(result.output)
     assert payload["status"] == "completed"
     assert payload["summary"]["synthetic_fixture"] is True
+    assert payload["summary"]["execution"]["response_format_mode"] == "none"
+    assert payload["summary"]["execution"]["response_format_applied"] is False
+    assert payload["summary"]["execution"]["response_format_type"] is None
+
+
+def test_baseline_json_object_option_and_unknown_value(
+    tmp_path: Path, fake_binary: Path, fake_model: Path
+) -> None:
+    constrained = runner.invoke(
+        app,
+        [
+            *_arguments(fake_binary, fake_model, tmp_path / "json-object"),
+            "--response-format",
+            "json_object",
+            "--json",
+        ],
+        env={"FAKE_LLAMA_SCENARIO": "healthy-with-timings"},
+    )
+    assert constrained.exit_code == 0, constrained.output
+    payload = json.loads(constrained.output)
+    execution = payload["summary"]["execution"]
+    assert execution["response_format_mode"] == "json_object"
+    assert execution["response_format_applied"] is True
+    assert execution["response_format_type"] == "json_object"
+
+    rejected = runner.invoke(
+        app,
+        [
+            *_arguments(fake_binary, fake_model, tmp_path / "rejected"),
+            "--response-format",
+            "json_schema",
+        ],
+    )
+    assert rejected.exit_code != 0
 
 
 def test_invalid_model_and_workload_exit_one(tmp_path: Path, fake_binary: Path) -> None:

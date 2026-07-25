@@ -8,7 +8,8 @@ import pytest
 
 from aarchtune.runtime.capabilities import ServerCapabilities
 from aarchtune.runtime.client import ClientFailureKind, LlamaServerClient, execute_workload_task
-from aarchtune.runtime.config import LlamaServerConfig
+from aarchtune.runtime.config import LlamaServerConfig, ResponseFormatMode
+from aarchtune.runtime.errors import ResponseFormatUnsupportedError
 from aarchtune.runtime.process import LlamaServerProcess, select_loopback_port
 from aarchtune.workload.loader import load_workload
 
@@ -135,4 +136,59 @@ def test_generation_parameters_and_non_streaming_are_preserved(
     assert payload["seed"] == task.generation.seed
     assert payload["stream"] is False
     assert payload["messages"] == [message.model_dump(mode="json") for message in task.messages]
+    assert "response_format" not in payload
+    assert set(payload) == {"messages", "temperature", "max_tokens", "seed", "stream"}
     assert response.task_id == task.id
+
+
+def test_json_object_request_adds_only_allowlisted_response_format(
+    config_factory: Callable[..., LlamaServerConfig],
+    server_capabilities: ServerCapabilities,
+    tmp_path: Path,
+) -> None:
+    request_file = tmp_path / "request.json"
+    config = config_factory(
+        response_format_mode=ResponseFormatMode.JSON_OBJECT,
+        extra_environment={
+            "FAKE_LLAMA_SCENARIO": "echo-request",
+            "FAKE_LLAMA_REQUEST_FILE": str(request_file),
+        },
+    )
+    task = _smoke_task()
+    with LlamaServerProcess(config, server_capabilities) as server:
+        server.wait_until_ready()
+        response = execute_workload_task(server.client, task)
+
+    payload = json.loads(request_file.read_text(encoding="utf-8"))
+    assert payload == {
+        "messages": [message.model_dump(mode="json") for message in task.messages],
+        "temperature": task.generation.temperature,
+        "max_tokens": task.generation.max_tokens,
+        "seed": task.generation.seed,
+        "stream": False,
+        "response_format": {"type": "json_object"},
+    }
+    assert "schema" not in json.dumps(payload["response_format"])
+    assert not ({"json_schema", "grammar", "stop", "tools", "tool_choice"} & set(payload))
+    assert response.request_succeeded is True
+
+
+def test_json_object_http_rejection_is_typed_compatibility_failure(
+    config_factory: Callable[..., LlamaServerConfig],
+    server_capabilities: ServerCapabilities,
+) -> None:
+    config = config_factory(
+        response_format_mode=ResponseFormatMode.JSON_OBJECT,
+        extra_environment={"FAKE_LLAMA_SCENARIO": "response-format-unsupported"},
+    )
+    with LlamaServerProcess(config, server_capabilities) as server:
+        server.wait_until_ready()
+        with pytest.raises(ResponseFormatUnsupportedError, match="response_format_unsupported"):
+            execute_workload_task(server.client, _smoke_task())
+
+
+def test_unknown_response_format_mode_is_rejected(
+    config_factory: Callable[..., LlamaServerConfig],
+) -> None:
+    with pytest.raises(ValueError, match="response_format_mode"):
+        config_factory(response_format_mode="json_schema")

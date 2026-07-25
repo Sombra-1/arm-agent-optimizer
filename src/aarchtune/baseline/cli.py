@@ -13,6 +13,7 @@ from rich.console import Console
 from aarchtune.baseline.models import BaselineRunConfig, BaselineRunResult
 from aarchtune.baseline.runner import run_baseline
 from aarchtune.errors import AArchTuneError
+from aarchtune.runtime.config import ResponseFormatMode
 
 console = Console()
 
@@ -84,6 +85,13 @@ def baseline(
     parallel_slots: Annotated[int | None, typer.Option("--parallel-slots", min=1)] = None,
     prompt_cache: Annotated[bool, typer.Option("--prompt-cache/--no-prompt-cache")] = False,
     mmap: Annotated[bool, typer.Option("--mmap/--no-mmap")] = True,
+    response_format: Annotated[
+        ResponseFormatMode,
+        typer.Option(
+            "--response-format",
+            help="Optional allowlisted chat-completion response constraint.",
+        ),
+    ] = ResponseFormatMode.NONE,
     request_timeout: Annotated[float, typer.Option("--request-timeout", min=0.1, max=600.0)] = 60.0,
     startup_timeout: Annotated[float, typer.Option("--startup-timeout", min=0.1, max=600.0)] = 30.0,
     sample_interval: Annotated[float, typer.Option("--sample-interval", min=0.05, max=5.0)] = 0.1,
@@ -108,6 +116,7 @@ def baseline(
             parallel_slots=parallel_slots,
             prompt_cache=prompt_cache,
             mmap=mmap,
+            response_format_mode=response_format,
             request_timeout_seconds=request_timeout,
             startup_timeout_seconds=startup_timeout,
             sample_interval_seconds=sample_interval,

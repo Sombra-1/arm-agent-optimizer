@@ -14,6 +14,7 @@ from aarchtune.benchmark.models import (
     BenchmarkStatistics,
     ProcessMetricsSummary,
 )
+from aarchtune.runtime.config import ResponseFormatMode
 
 
 class BaselineModel(BaseModel):
@@ -56,6 +57,7 @@ class BaselineRunConfig(BaselineModel):
     parallel_slots: Annotated[int, Field(ge=1, le=1024)] | None = None
     prompt_cache: bool = False
     mmap: bool = True
+    response_format_mode: ResponseFormatMode = ResponseFormatMode.NONE
     request_timeout_seconds: Annotated[float, Field(ge=0.1, le=600.0)] = 60.0
     startup_timeout_seconds: Annotated[float, Field(ge=0.1, le=600.0)] = 30.0
     shutdown_timeout_seconds: Annotated[float, Field(ge=0.1, le=60.0)] = 5.0
@@ -98,6 +100,9 @@ class ExecutionProvenance(BaselineModel):
     warmup_task_ids: list[str]
     warmup_success: list[bool]
     measured_repetitions: int
+    response_format_mode: ResponseFormatMode = ResponseFormatMode.NONE
+    response_format_applied: bool = False
+    response_format_type: Literal["json_object"] | None = None
     request_timeout_seconds: float
     startup_timeout_seconds: float
     process_sampling_interval_seconds: float

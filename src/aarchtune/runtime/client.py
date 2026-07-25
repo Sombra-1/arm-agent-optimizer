@@ -8,6 +8,8 @@ from typing import Any, cast
 import httpx
 from pydantic import BaseModel, ConfigDict, JsonValue
 
+from aarchtune.runtime.config import ResponseFormatMode
+from aarchtune.runtime.errors import ResponseFormatUnsupportedError
 from aarchtune.workload.schema import ResponseInput, WorkloadTask
 
 
@@ -51,11 +53,13 @@ class LlamaServerClient:
         *,
         request_timeout_seconds: float = 60.0,
         maximum_response_characters: int = 1024 * 1024,
+        response_format_mode: ResponseFormatMode = ResponseFormatMode.NONE,
     ) -> None:
         bracketed_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
         self.base_url = f"http://{bracketed_host}:{port}"
         self.request_timeout_seconds = request_timeout_seconds
         self.maximum_response_characters = maximum_response_characters
+        self.response_format_mode = ResponseFormatMode(response_format_mode)
         self._client = httpx.Client(base_url=self.base_url, trust_env=False)
 
     def close(self) -> None:
@@ -173,6 +177,8 @@ class LlamaServerClient:
             "seed": task.generation.seed,
             "stream": False,
         }
+        if self.response_format_mode is ResponseFormatMode.JSON_OBJECT:
+            payload["response_format"] = {"type": "json_object"}
         result = self._request(
             "POST",
             "/v1/chat/completions",
@@ -180,6 +186,11 @@ class LlamaServerClient:
             require_json=True,
         )
         if not result.succeeded:
+            if (
+                self.response_format_mode is ResponseFormatMode.JSON_OBJECT
+                and result.status_code in {400, 422}
+            ):
+                raise ResponseFormatUnsupportedError(result.status_code)
             return ChatCompletionResult(
                 response=ResponseInput(
                     task_id=task.id,

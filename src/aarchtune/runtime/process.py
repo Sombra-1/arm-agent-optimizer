@@ -197,6 +197,7 @@ class LlamaServerProcess:
             self.config.host,
             port,
             request_timeout_seconds=self.config.request_timeout_seconds,
+            response_format_mode=self.config.response_format_mode,
         )
         return self
 

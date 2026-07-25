@@ -189,10 +189,22 @@ class Handler(BaseHTTPRequestHandler):
         request_file = os.environ.get("FAKE_LLAMA_REQUEST_FILE")
         if request_file:
             Path(request_file).write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+        requests_file = os.environ.get("FAKE_LLAMA_REQUESTS_FILE")
+        if requests_file:
+            with REQUEST_LOCK:
+                with Path(requests_file).open("a", encoding="utf-8") as output:
+                    output.write(json.dumps(payload, sort_keys=True) + "\n")
         active = scenario()
         with REQUEST_LOCK:
             REQUEST_COUNT += 1
             request_number = REQUEST_COUNT
+        response_format = payload.get("response_format")
+        if response_format is not None and response_format != {"type": "json_object"}:
+            emit_json(self, 400, {"error": "unsupported response_format"})
+            return
+        if active == "response-format-unsupported" and response_format is not None:
+            emit_json(self, 400, {"error": "response_format unsupported by synthetic server"})
+            return
         if active == "server-exits-mid-run":
             exit_after = int(os.environ.get("FAKE_LLAMA_EXIT_AFTER", "2"))
             if request_number > exit_after:
