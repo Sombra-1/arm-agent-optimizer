@@ -1,0 +1,531 @@
+name: Native Arm64 Model Quality Precheck
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-arm64-quality-precheck-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality-precheck:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    env:
+      LLAMA_REPOSITORY: https://github.com/ggml-org/llama.cpp.git
+      LLAMA_RELEASE: b10106
+      LLAMA_COMMIT: 1425386fd996511e1f3295e7366c38289a92a271
+      MODEL_REPOSITORY: Qwen/Qwen2.5-7B-Instruct-GGUF
+      MODEL_REVISION: 293ca9a10157b0e5fc5cb32af8b636a88bede891
+      MODEL_FILENAME: qwen2.5-7b-instruct-q3_k_m.gguf
+      MODEL_QUANTIZATION: Q3_K_M
+      MODEL_LICENSE: Apache-2.0
+      MODEL_SIZE_BYTES: "3808391072"
+      MODEL_SHA256: a96b16179dc6cc9afdf0cf7a96a80c199cbd00b9be207c3465be21cb721cca5e
+      MODEL_URL: https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/293ca9a10157b0e5fc5cb32af8b636a88bede891/qwen2.5-7b-instruct-q3_k_m.gguf
+      ARTIFACT_NAME: aarchtune-arm64-quality-precheck-${{ github.run_id }}-${{ github.run_attempt }}
+      PUBLIC_EVIDENCE_SCAN_PATTERN: /home/runner/|/opt/hostedtoolcache/|Authorization:|Bearer([[:space:]]|$)|ghp_|github_pat_|BEGIN OPENSSH PRIVATE KEY|BEGIN PRIVATE KEY|/home/ayx|raw_response|response_body
+      HF_TOKEN_ASSIGNMENT_PATTERN: "HF_TOKEN[\"']?[[:space:]]*[:=][[:space:]]*[\"']?[^<\"'[:space:]][^\"'[:space:]]*"
+
+    steps:
+      - name: Check out AArchTune
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Initialize ephemeral paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "EVIDENCE_DIR=$RUNNER_TEMP/aarchtune-quality-precheck-evidence"
+            echo "BASELINE_DIR=$RUNNER_TEMP/aarchtune-quality-precheck-baseline"
+            echo "MODEL_DIR=$RUNNER_TEMP/aarchtune-quality-precheck-model"
+            echo "MODEL_CACHE_DIR=$RUNNER_TEMP/aarchtune-quality-precheck-cache"
+            echo "MODEL_PATH=$RUNNER_TEMP/aarchtune-quality-precheck-model/$MODEL_FILENAME"
+            echo "LLAMA_SOURCE_DIR=$RUNNER_TEMP/llama.cpp"
+            echo "LLAMA_BUILD_DIR=$RUNNER_TEMP/llama.cpp-build"
+            echo "HF_HOME=$RUNNER_TEMP/aarchtune-quality-precheck-cache/huggingface"
+            echo "PRECHECK_STARTED_EPOCH=$(date +%s)"
+          } >> "$GITHUB_ENV"
+
+      - name: Prove native Arm64 and collect runner evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p \
+            "$EVIDENCE_DIR/runner" \
+            "$EVIDENCE_DIR/llama-build" \
+            "$EVIDENCE_DIR/checksums" \
+            "$EVIDENCE_DIR/quality"
+          architecture=$(uname -m)
+          case "$architecture" in
+            aarch64|arm64) ;;
+            *)
+              echo "Refusing non-native runner architecture: $architecture" >&2
+              exit 1
+              ;;
+          esac
+          uname -m > "$EVIDENCE_DIR/runner/uname-m.txt"
+          lscpu > "$EVIDENCE_DIR/runner/lscpu.txt"
+          nproc > "$EVIDENCE_DIR/runner/nproc.txt"
+          free -b > "$EVIDENCE_DIR/runner/free-b.txt"
+          cat > "$EVIDENCE_DIR/runner/classification.txt" <<'EOF'
+          Native GitHub-hosted Linux Arm64 runner
+          Not emulation
+          Ephemeral shared validation environment
+          Not a performance benchmark
+          EOF
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install build dependencies and AArchTune
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential \
+            ca-certificates \
+            cmake \
+            curl \
+            git \
+            jq \
+            ninja-build
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          aarchtune baseline --help > /dev/null
+          aarchtune baseline validate --help > /dev/null
+
+      - name: Fetch pinned official llama.cpp source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$LLAMA_SOURCE_DIR"
+          git -C "$LLAMA_SOURCE_DIR" init
+          git -C "$LLAMA_SOURCE_DIR" remote add upstream "$LLAMA_REPOSITORY"
+          git -C "$LLAMA_SOURCE_DIR" fetch --depth 1 upstream "$LLAMA_COMMIT"
+          git -C "$LLAMA_SOURCE_DIR" checkout --detach FETCH_HEAD
+          actual_commit=$(git -C "$LLAMA_SOURCE_DIR" rev-parse HEAD)
+          [[ "$actual_commit" == "$LLAMA_COMMIT" ]]
+          tag_commit=$(
+            git -C "$LLAMA_SOURCE_DIR" ls-remote \
+              --exit-code --tags --refs upstream "refs/tags/$LLAMA_RELEASE" |
+              awk '{print $1}'
+          )
+          [[ "$tag_commit" == "$LLAMA_COMMIT" ]]
+          grep -q 'option(GGML_CPU_KLEIDIAI' "$LLAMA_SOURCE_DIR/ggml/CMakeLists.txt"
+          grep -Rqs 'LLM_ARCH_QWEN2' "$LLAMA_SOURCE_DIR/src"
+          {
+            echo "upstream_repository=$LLAMA_REPOSITORY"
+            echo "release=$LLAMA_RELEASE"
+            echo "commit=$actual_commit"
+          } > "$EVIDENCE_DIR/llama-build/source.txt"
+
+      - name: Build only native quality-precheck binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          configuration=(
+            cmake
+            -S "$LLAMA_SOURCE_DIR"
+            -B "$LLAMA_BUILD_DIR"
+            -G Ninja
+            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+            -DGGML_CPU=ON
+            -DGGML_CPU_KLEIDIAI=ON
+            -DGGML_NATIVE=ON
+            -DGGML_CUDA=OFF
+            -DGGML_VULKAN=OFF
+            -DGGML_METAL=OFF
+            -DGGML_RPC=OFF
+            -DGGML_BUILD_TESTS=OFF
+            -DGGML_BUILD_EXAMPLES=OFF
+            -DLLAMA_BUILD_TESTS=OFF
+            -DLLAMA_BUILD_EXAMPLES=OFF
+            -DLLAMA_BUILD_TOOLS=ON
+            -DLLAMA_BUILD_SERVER=ON
+            -DLLAMA_BUILD_UI=OFF
+            -DLLAMA_USE_PREBUILT_UI=OFF
+            -DLLAMA_BUILD_APP=OFF
+          )
+          "${configuration[@]}" > "$RUNNER_TEMP/llama-cmake.log" 2>&1
+          grep -Eq '^GGML_CPU_KLEIDIAI:BOOL=ON$' "$LLAMA_BUILD_DIR/CMakeCache.txt"
+          grep -q 'GGML_USE_CPU_KLEIDIAI' "$LLAMA_BUILD_DIR/compile_commands.json"
+          cmake --build "$LLAMA_BUILD_DIR" \
+            --target llama-server llama-cli \
+            --parallel "$(nproc)" > "$RUNNER_TEMP/llama-build.log" 2>&1
+          for binary in llama-server llama-cli; do
+            path="$LLAMA_BUILD_DIR/bin/$binary"
+            [[ -x "$path" ]]
+            sha256sum "$path" >> "$EVIDENCE_DIR/checksums/llama-binaries.sha256"
+            "$path" --version > "$RUNNER_TEMP/$binary-version.txt" 2>&1
+            grep -q "${LLAMA_COMMIT:0:7}" "$RUNNER_TEMP/$binary-version.txt"
+          done
+          {
+            echo "build_status=success"
+            echo "kleidiai_build_enabled=true"
+            echo "native_build=true"
+            echo "built_targets=llama-server,llama-cli"
+            echo "binary_verification=passed"
+          } > "$EVIDENCE_DIR/llama-build/status.txt"
+
+      - name: Validate workload and policy inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ $(grep -cve '^[[:space:]]*$' workloads/smoke-test.jsonl) -eq 5 ]]
+          aarchtune workload validate workloads/smoke-test.jsonl --json > /dev/null
+          sha256sum workloads/smoke-test.jsonl \
+            > "$EVIDENCE_DIR/checksums/workload.sha256"
+          sha256sum configs/default-quality-policy.yaml \
+            > "$EVIDENCE_DIR/checksums/quality-policy.sha256"
+
+      - name: Verify immutable model metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          metadata="$RUNNER_TEMP/model-metadata.json"
+          curl \
+            --fail \
+            --location \
+            --retry 3 \
+            --retry-all-errors \
+            --connect-timeout 30 \
+            --max-time 120 \
+            --output "$metadata" \
+            "https://huggingface.co/api/models/$MODEL_REPOSITORY/revision/$MODEL_REVISION?blobs=true"
+          jq -e --arg revision "$MODEL_REVISION" '.sha == $revision' "$metadata"
+          jq -e \
+            --arg filename "$MODEL_FILENAME" \
+            --arg sha256 "$MODEL_SHA256" \
+            --argjson size "$MODEL_SIZE_BYTES" \
+            '.siblings[] |
+              select(.rfilename == $filename) |
+              .size == $size and .lfs.size == $size and .lfs.sha256 == $sha256' \
+            "$metadata"
+
+      - name: Download and verify pinned 7B model
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$MODEL_DIR" "$MODEL_CACHE_DIR"
+          curl \
+            --fail \
+            --location \
+            --retry 3 \
+            --retry-all-errors \
+            --connect-timeout 30 \
+            --max-time 1800 \
+            --output "$MODEL_PATH" \
+            "$MODEL_URL"
+          [[ -s "$MODEL_PATH" ]]
+          python scripts/quality_precheck.py verify-model \
+            --path "$MODEL_PATH" \
+            --size "$MODEL_SIZE_BYTES" \
+            --sha256 "$MODEL_SHA256" > "$RUNNER_TEMP/model-verification.json"
+          grep -aFq 'general.architecture' "$MODEL_PATH"
+          grep -aFq 'tokenizer.chat_template' "$MODEL_PATH"
+          jq -n \
+            --arg repository "$MODEL_REPOSITORY" \
+            --arg revision "$MODEL_REVISION" \
+            --arg filename "$MODEL_FILENAME" \
+            --arg quantization "$MODEL_QUANTIZATION" \
+            --arg license "$MODEL_LICENSE" \
+            --arg sha256 "$MODEL_SHA256" \
+            --argjson size_bytes "$MODEL_SIZE_BYTES" \
+            '{
+              repository: $repository,
+              revision: $revision,
+              filename: $filename,
+              quantization: $quantization,
+              license: $license,
+              size_bytes: $size_bytes,
+              sha256: $sha256,
+              native_chat_template_present: true,
+              verified: true
+            }' > "$EVIDENCE_DIR/model-provenance.json"
+
+      - name: Probe model loading on CPU
+        shell: bash
+        run: |
+          set -euo pipefail
+          probe_stdout="$RUNNER_TEMP/llama-cli-probe.stdout"
+          probe_stderr="$RUNNER_TEMP/llama-cli-probe.stderr"
+          setsid timeout --signal=TERM --kill-after=15s 600s \
+            "$LLAMA_BUILD_DIR/bin/llama-cli" \
+            --model "$MODEL_PATH" \
+            --prompt 'Return only the word OK.' \
+            --single-turn \
+            --simple-io \
+            --n-predict 8 \
+            --seed 42 \
+            --temp 0 \
+            --n-gpu-layers 0 \
+            > "$probe_stdout" 2> "$probe_stderr" &
+          probe_pid=$!
+          echo "$probe_pid" > "$RUNNER_TEMP/aarchtune-probe.pgid"
+          set +e
+          wait "$probe_pid"
+          probe_exit=$?
+          set -e
+          sed \
+            -e "s#${RUNNER_TEMP}#\\$RUNNER_TEMP#g" \
+            -e "s#${GITHUB_WORKSPACE}#\\$GITHUB_WORKSPACE#g" \
+            "$probe_stderr" |
+            grep -Ei \
+              'CPU_KLEIDIAI|KleidiAI|load_backend|system_info|llama_model_loader|load_tensors|llama_context|load time|prompt eval|eval time' |
+            head -200 > "$EVIDENCE_DIR/llama-build/runtime-provenance.txt" || true
+          kleidiai_status=unknown
+          if grep -Eiq \
+            'CPU_KLEIDIAI|KleidiAI[^[:alnum:]]*(backend|enabled|active|loaded|in use|available)[^[:alnum:]]*(true|yes|on|1)?' \
+            "$probe_stderr"; then
+            kleidiai_status=verified
+          fi
+          {
+            echo "probe_exit_code=$probe_exit"
+            echo "model_loaded=$([[ $probe_exit -eq 0 ]] && echo true || echo false)"
+            echo "cpu_inference=true"
+            echo "n_gpu_layers=0"
+            echo "generated_text_published=false"
+            echo "kleidiai_runtime_evidence=$kleidiai_status"
+          } > "$EVIDENCE_DIR/model-load-status.txt"
+          echo "KLEIDIAI_RUNTIME_STATUS=$kleidiai_status" >> "$GITHUB_ENV"
+          [[ "$probe_exit" -eq 0 ]]
+
+      - name: Run baseline quality only
+        shell: bash
+        run: |
+          set -euo pipefail
+          setsid aarchtune baseline \
+            --binary "$LLAMA_BUILD_DIR/bin/llama-server" \
+            --model "$MODEL_PATH" \
+            --workload workloads/smoke-test.jsonl \
+            --output-dir "$BASELINE_DIR" \
+            --repetitions 2 \
+            --warmup-requests 1 \
+            --mmap \
+            --request-timeout 60 \
+            --startup-timeout 120 \
+            --json \
+            > "$RUNNER_TEMP/aarchtune-baseline.stdout" \
+            2> "$RUNNER_TEMP/aarchtune-baseline.stderr" &
+          baseline_pid=$!
+          echo "$baseline_pid" > "$RUNNER_TEMP/aarchtune-baseline.pgid"
+          set +e
+          wait "$baseline_pid"
+          baseline_exit=$?
+          set -e
+          echo "BASELINE_EXIT=$baseline_exit" >> "$GITHUB_ENV"
+          [[ "$baseline_exit" -eq 0 ]]
+
+      - name: Validate and sanitize baseline quality
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          quality_dir="$EVIDENCE_DIR/quality"
+          mkdir -p "$quality_dir"
+          if [[ -f "$BASELINE_DIR/baseline-summary.json" \
+                && -f "$BASELINE_DIR/manifest.json" \
+                && -f "$BASELINE_DIR/raw-attempts.jsonl" ]]; then
+            set +e
+            python scripts/quality_precheck.py sanitize \
+              --baseline-dir "$BASELINE_DIR" \
+              --policy configs/default-quality-policy.yaml \
+              --output-dir "$quality_dir" \
+              > "$RUNNER_TEMP/quality-outcome.txt"
+            sanitize_exit=$?
+            set -e
+            if [[ "$sanitize_exit" -ne 0 ]]; then
+              rm -f "$quality_dir/"*.json
+            fi
+          fi
+          if [[ ! -f "$quality_dir/quality-policy-outcome.json" ]]; then
+            jq -n \
+              --arg outcome quality_evidence_incomplete \
+              --arg reason "Baseline did not produce complete schema-valid evidence" \
+              '{
+                outcome: $outcome,
+                aggregate: null,
+                evidence_errors: [$reason],
+                failed_policy_checks: []
+              }' > "$quality_dir/quality-policy-outcome.json"
+            printf '[]\n' > "$quality_dir/per-task-classifications.json"
+          fi
+
+      - name: Prepare limitations statement
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_DIR"
+          cat > "$EVIDENCE_DIR/limitations-readme.txt" <<'EOF'
+          This workflow evaluates model suitability only.
+          It is not an AArchTune optimization or performance benchmark.
+          It performs one fixed baseline-quality check on an ephemeral shared runner.
+          Model weights, generated text, request bodies, server logs, and process streams are excluded.
+          EOF
+
+      - name: Clean up workflow-owned processes and sensitive evidence
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          cleanup_ok=true
+          for pgid_file in \
+            "$RUNNER_TEMP/aarchtune-probe.pgid" \
+            "$RUNNER_TEMP/aarchtune-baseline.pgid"; do
+            [[ -f "$pgid_file" ]] || continue
+            pgid=$(<"$pgid_file")
+            [[ "$pgid" =~ ^[0-9]+$ ]]
+            if kill -0 -- "-$pgid" 2>/dev/null; then
+              kill -TERM -- "-$pgid"
+              for _ in {1..20}; do
+                kill -0 -- "-$pgid" 2>/dev/null || break
+                sleep 0.5
+              done
+            fi
+            if kill -0 -- "-$pgid" 2>/dev/null; then
+              kill -KILL -- "-$pgid"
+            fi
+            if ps -eo pgid= | awk -v owned="$pgid" '
+              $1 == owned { found=1 }
+              END { exit found ? 0 : 1 }
+            '; then
+              cleanup_ok=false
+            fi
+          done
+          rm -f \
+            "$RUNNER_TEMP/llama-cli-probe.stdout" \
+            "$RUNNER_TEMP/llama-cli-probe.stderr" \
+            "$RUNNER_TEMP/aarchtune-baseline.stdout" \
+            "$RUNNER_TEMP/aarchtune-baseline.stderr" \
+            "$RUNNER_TEMP/model-metadata.json" \
+            "$RUNNER_TEMP/model-verification.json"
+          rm -rf "$BASELINE_DIR"
+          rm -f "$MODEL_PATH"
+          rm -rf "$MODEL_DIR" "$MODEL_CACHE_DIR"
+          [[ ! -d "$BASELINE_DIR" ]]
+          [[ ! -e "$MODEL_PATH" ]]
+          [[ ! -d "$MODEL_CACHE_DIR" ]]
+          {
+            echo "tracked_process_groups_stopped=$cleanup_ok"
+            echo "samplers_stopped=$cleanup_ok"
+            echo "model_deleted=true"
+            echo "model_cache_deleted=true"
+            echo "response_evidence_deleted=true"
+            echo "probe_output_deleted=true"
+            echo "cleanup_complete=$cleanup_ok"
+          } > "$EVIDENCE_DIR/cleanup-proof.txt"
+          [[ "$cleanup_ok" == true ]]
+
+      - name: Write summary and privacy-scan artifact
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          outcome=$(
+            jq -r '.outcome' "$EVIDENCE_DIR/quality/quality-policy-outcome.json"
+          )
+          ended_epoch=$(date +%s)
+          duration_seconds=$((ended_epoch - PRECHECK_STARTED_EPOCH))
+          {
+            echo "workflow=native-arm64-quality-precheck"
+            echo "purpose=model_suitability_only"
+            echo "native_architecture=$(cat "$EVIDENCE_DIR/runner/uname-m.txt" 2>/dev/null || echo unavailable)"
+            echo "llama_cpp_release=$LLAMA_RELEASE"
+            echo "llama_cpp_commit=$LLAMA_COMMIT"
+            echo "model=$MODEL_REPOSITORY/$MODEL_FILENAME"
+            echo "model_revision=$MODEL_REVISION"
+            echo "model_quantization=$MODEL_QUANTIZATION"
+            echo "model_size_bytes=$MODEL_SIZE_BYTES"
+            echo "model_sha256=$MODEL_SHA256"
+            echo "model_license=$MODEL_LICENSE"
+            echo "kleidiai_build_enabled=true"
+            echo "kleidiai_runtime_evidence=${KLEIDIAI_RUNTIME_STATUS:-unknown}"
+            echo "configured_attempts=10"
+            echo "quality_outcome=$outcome"
+            echo "duration_seconds=$duration_seconds"
+            echo "screening_executed=false"
+            echo "optimization_executed=false"
+          } > "$EVIDENCE_DIR/workflow-summary.txt"
+          {
+            echo "## Native Arm64 Model Quality Precheck"
+            echo
+            echo "**This workflow evaluates model suitability only.**"
+            echo "It is not an AArchTune optimization or performance benchmark."
+            echo
+            echo "- Architecture: \`$(cat "$EVIDENCE_DIR/runner/uname-m.txt" 2>/dev/null || echo unavailable)\`"
+            echo "- Model: \`Qwen2.5-7B-Instruct Q3_K_M\`"
+            echo "- Quality outcome: \`$outcome\`"
+            echo "- Duration: \`$duration_seconds seconds\`"
+            if [[ -f "$EVIDENCE_DIR/quality/validated-quality.json" ]]; then
+              jq -r '
+                "- Completed attempts: `" + (.completed_attempts | tostring) + "/" +
+                  (.configured_attempts | tostring) + "`",
+                "- Request success: `" + (.request_success_rate | tostring) + "`",
+                "- Task success: `" + (.task_success_rate | tostring) + "`",
+                "- JSON validity: `" + (.json_validity_rate | tostring) + "`",
+                "- Validator pass rate: `" + (.validator_pass_rate | tostring) + "`",
+                "- Timeout rate: `" + (.timeout_rate | tostring) + "`"
+              ' "$EVIDENCE_DIR/quality/validated-quality.json"
+            fi
+            echo "- Screening executed: \`false\`"
+            echo "- Optimization executed: \`false\`"
+            echo "- Artifact: \`$ARTIFACT_NAME\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          scan_results="$RUNNER_TEMP/aarchtune-quality-precheck-scan.txt"
+          grep -RInE "$PUBLIC_EVIDENCE_SCAN_PATTERN" "$EVIDENCE_DIR" \
+            > "$scan_results" || true
+          grep -RInE "$HF_TOKEN_ASSIGNMENT_PATTERN" "$EVIDENCE_DIR" \
+            >> "$scan_results" || true
+          if [[ -s "$scan_results" ]]; then
+            echo "Forbidden artifact content found:" >&2
+            sed -n '1,200p' "$scan_results" >&2
+            exit 1
+          fi
+          if find "$EVIDENCE_DIR" -type f \
+            \( -name '*.gguf' -o -name 'raw-attempts.jsonl' \
+               -o -name 'request-metrics.jsonl' -o -name 'process-samples.jsonl' \
+               -o -name 'server.log' -o -name '*stdout*' -o -name '*stderr*' \) |
+            grep -q .; then
+            echo "Forbidden model or runtime artifact found." >&2
+            exit 1
+          fi
+          if grep -RInE \
+            '"(response_text|server_fields|observed|expected)"' \
+            "$EVIDENCE_DIR"; then
+            echo "Response-derived fields found in public evidence." >&2
+            exit 1
+          fi
+          echo "forbidden_content_matches=0" > "$EVIDENCE_DIR/privacy-scan.txt"
+
+      - name: Upload sanitized native Arm64 quality evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ env.EVIDENCE_DIR }}
+          retention-days: 14
+          if-no-files-found: error
+          include-hidden-files: false
+
+      - name: Preserve quality-precheck outcome
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          outcome=$(
+            jq -r '.outcome' "$EVIDENCE_DIR/quality/quality-policy-outcome.json"
+          )
+          [[ "$outcome" == "quality_policy_passed" ]]
