@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import struct
 import subprocess
 import sys
@@ -34,6 +35,11 @@ def _helper() -> ModuleType:
 
 def _workflow() -> dict[str, object]:
     return yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+
+
+def _workflow_step(name: str) -> dict[str, str]:
+    steps = _workflow()["jobs"]["quality-precheck"]["steps"]
+    return next(item for item in steps if item.get("name") == name)
 
 
 def _baseline(
@@ -319,6 +325,110 @@ def test_output_contracts_are_allowlisted_and_dispatch_is_typed() -> None:
         helper.output_contract_environment('{"type":"json_schema"}')
 
 
+def test_profile_environment_preserves_spaces_without_shell_activation(tmp_path: Path) -> None:
+    step = _workflow_step("Resolve allowlisted immutable model profile")["run"]
+    github_environment = tmp_path / "github.env"
+    runner_temp = tmp_path / "runner"
+    model_dir = tmp_path / "models"
+    runner_temp.mkdir()
+    subprocess.run(
+        ["bash", "-c", step],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "PATH": f"{Path(sys.executable).parent}:{os.environ['PATH']}",
+            "GITHUB_ENV": str(github_environment),
+            "RUNNER_TEMP": str(runner_temp),
+            "MODEL_PROFILE": "mistral-nemo-12b-q4-k-m",
+            "OUTPUT_CONTRACT": "prompt_only",
+            "MODEL_DIR": str(model_dir),
+        },
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    records = github_environment.read_text(encoding="utf-8").splitlines()
+    assert records.count("MODEL_LABEL=Mistral-Nemo-Instruct-2407 12B Q4_K_M") == 1
+    assert 'source "$profile_environment"' not in step
+    assert "eval " not in step
+    assert "model_filename=$(" in step
+    assert "sed -n 's/^MODEL_FILENAME=//p'" in step
+    filename = next(
+        record.removeprefix("MODEL_FILENAME=")
+        for record in records
+        if record.startswith("MODEL_FILENAME=")
+    )
+    assert filename == "Mistral-Nemo-Instruct-2407-Q4_K_M.gguf"
+    assert records.count(f"MODEL_PATH={model_dir}/{filename}") == 1
+    assert not (runner_temp / "model-profile.env").exists()
+
+
+@pytest.mark.parametrize("separator", ["\n", "\r"])
+def test_workflow_environment_rejects_multiline_injection(separator: str) -> None:
+    helper = _helper()
+    profile = helper.MODEL_PROFILES["mistral-nemo-12b-q4-k-m"]
+    helper.MODEL_PROFILES["injected"] = replace(
+        profile,
+        model_label=f"safe{separator}INJECTED=value",
+    )
+    with pytest.raises(ValueError, match="workflow environment value is multiline"):
+        helper.profile_environment("injected")
+    with pytest.raises(ValueError, match="workflow environment key is invalid"):
+        helper.validate_environment({"unsafe": "value"})
+
+
+def _run_cleanup(tmp_path: Path, environment: dict[str, str]) -> dict[str, str]:
+    runner_temp = tmp_path / "runner"
+    evidence_dir = tmp_path / "evidence"
+    runner_temp.mkdir(exist_ok=True)
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            _workflow_step("Clean up workflow-owned processes and sensitive evidence")["run"],
+        ],
+        cwd=ROOT,
+        env={
+            "PATH": "/usr/bin:/bin",
+            "RUNNER_TEMP": str(runner_temp),
+            "EVIDENCE_DIR": str(evidence_dir),
+            **environment,
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    return dict(
+        line.split("=", 1) for line in (evidence_dir / "cleanup-proof.txt").read_text().splitlines()
+    )
+
+
+def test_cleanup_succeeds_before_profile_completion(tmp_path: Path) -> None:
+    proof = _run_cleanup(tmp_path, {})
+    assert proof["model_path_initialized"] == "false"
+    assert proof["model_download_started"] == "false"
+    assert proof["model_deleted"] == "not_created"
+    assert proof["cleanup_complete"] == "true"
+
+
+@pytest.mark.parametrize("model_exists", [False, True])
+def test_cleanup_handles_partially_initialized_model_path(
+    tmp_path: Path, model_exists: bool
+) -> None:
+    model_path = tmp_path / "models" / "model.gguf"
+    if model_exists:
+        model_path.parent.mkdir()
+        model_path.write_bytes(b"partial")
+    proof = _run_cleanup(tmp_path, {"MODEL_PATH": str(model_path)})
+    assert proof["model_path_initialized"] == "true"
+    assert proof["model_deleted"] == ("true" if model_exists else "not_created")
+    assert proof["model_cache_deleted"] == "not_created"
+    assert proof["response_evidence_deleted"] == "not_created"
+    assert proof["cleanup_complete"] == "true"
+    assert not model_path.exists()
+
+
 def test_model_size_and_sha_mismatches_fail(tmp_path: Path) -> None:
     helper = _helper()
     model = tmp_path / "model.gguf"
@@ -541,7 +651,7 @@ def test_license_source_is_cleaned_and_only_sanitized_provenance_is_public() -> 
     assert 'license_source="$RUNNER_TEMP/model-license-evidence"' in text
     assert '"$RUNNER_TEMP/model-license-evidence" \\' in text
     assert '[[ ! -e "$RUNNER_TEMP/model-license-evidence" ]]' in text
-    assert "license_evidence_source_deleted=true" in text
+    assert 'echo "license_evidence_source_deleted=$license_evidence_source_deleted"' in text
     assert "$EVIDENCE_DIR/model-license-evidence" not in text
     assert "full README" not in text
     provenance_block = text[

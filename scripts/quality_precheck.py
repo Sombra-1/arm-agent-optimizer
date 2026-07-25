@@ -224,6 +224,19 @@ _CLASSIFICATION_ORDER = (
     "forbidden_text_present",
 )
 
+_ENVIRONMENT_KEY = re.compile(r"^[A-Z][A-Z0-9_]*$")
+
+
+def validate_environment(environment: dict[str, str]) -> dict[str, str]:
+    """Validate records before writing them to the GitHub Actions environment."""
+
+    for key, value in environment.items():
+        if not _ENVIRONMENT_KEY.fullmatch(key):
+            raise ValueError(f"workflow environment key is invalid: {key}")
+        if "\n" in value or "\r" in value:
+            raise ValueError(f"workflow environment value is multiline: {key}")
+    return environment
+
 
 def get_model_profile(name: str) -> ModelProfile:
     """Resolve one immutable allowlisted model profile."""
@@ -271,32 +284,34 @@ def profile_environment(name: str) -> dict[str, str]:
     """Return the fixed workflow environment for one allowlisted profile."""
 
     profile = get_model_profile(name)
-    return {
-        "MODEL_REPOSITORY": profile.repository,
-        "MODEL_REVISION": profile.revision,
-        "MODEL_FILENAME": profile.filename,
-        "MODEL_QUANTIZATION": profile.quantization,
-        "MODEL_LICENSE": profile.license,
-        "MODEL_LICENSE_ID": profile.license_id,
-        "MODEL_LABEL": profile.model_label,
-        "MODEL_ARCHITECTURE": profile.architecture,
-        "MODEL_TOKENIZER": profile.tokenizer_model,
-        "MODEL_CHAT_TEMPLATE_MARKER": profile.chat_template_marker,
-        "MODEL_REQUIRES_INITIAL_SYSTEM": str(profile.requires_initial_system_support).lower(),
-        "GGUF_DECLARED_SOURCE_REPOSITORY": profile.declared_source_repository,
-        "SOURCE_MODEL_REPOSITORY": profile.source_model.repository,
-        "SOURCE_MODEL_REVISION": profile.source_model.revision,
-        "SOURCE_MODEL_NAME": profile.source_model.model_name,
-        "LICENSE_REPOSITORY": profile.license_evidence.repository,
-        "LICENSE_REVISION": profile.license_evidence.revision,
-        "LICENSE_PATH": profile.license_evidence.path,
-        "LICENSE_EVIDENCE_SHA256": profile.license_evidence.sha256,
-        "LICENSE_EVIDENCE_URL": profile.license_evidence.url,
-        "MODEL_PARAMETER_CLASS": profile.parameter_class,
-        "MODEL_SIZE_BYTES": str(profile.size_bytes),
-        "MODEL_SHA256": profile.sha256,
-        "MODEL_URL": profile.url,
-    }
+    return validate_environment(
+        {
+            "MODEL_REPOSITORY": profile.repository,
+            "MODEL_REVISION": profile.revision,
+            "MODEL_FILENAME": profile.filename,
+            "MODEL_QUANTIZATION": profile.quantization,
+            "MODEL_LICENSE": profile.license,
+            "MODEL_LICENSE_ID": profile.license_id,
+            "MODEL_LABEL": profile.model_label,
+            "MODEL_ARCHITECTURE": profile.architecture,
+            "MODEL_TOKENIZER": profile.tokenizer_model,
+            "MODEL_CHAT_TEMPLATE_MARKER": profile.chat_template_marker,
+            "MODEL_REQUIRES_INITIAL_SYSTEM": str(profile.requires_initial_system_support).lower(),
+            "GGUF_DECLARED_SOURCE_REPOSITORY": profile.declared_source_repository,
+            "SOURCE_MODEL_REPOSITORY": profile.source_model.repository,
+            "SOURCE_MODEL_REVISION": profile.source_model.revision,
+            "SOURCE_MODEL_NAME": profile.source_model.model_name,
+            "LICENSE_REPOSITORY": profile.license_evidence.repository,
+            "LICENSE_REVISION": profile.license_evidence.revision,
+            "LICENSE_PATH": profile.license_evidence.path,
+            "LICENSE_EVIDENCE_SHA256": profile.license_evidence.sha256,
+            "LICENSE_EVIDENCE_URL": profile.license_evidence.url,
+            "MODEL_PARAMETER_CLASS": profile.parameter_class,
+            "MODEL_SIZE_BYTES": str(profile.size_bytes),
+            "MODEL_SHA256": profile.sha256,
+            "MODEL_URL": profile.url,
+        }
+    )
 
 
 def output_contract_environment(name: str) -> dict[str, str]:
@@ -306,10 +321,12 @@ def output_contract_environment(name: str) -> dict[str, str]:
         contract = OUTPUT_CONTRACTS[name]
     except KeyError as error:
         raise ValueError(f"output contract is not allowlisted: {name}") from error
-    return {
-        "OUTPUT_CONTRACT": name,
-        "RESPONSE_FORMAT_MODE": str(contract["response_format_mode"]),
-    }
+    return validate_environment(
+        {
+            "OUTPUT_CONTRACT": name,
+            "RESPONSE_FORMAT_MODE": str(contract["response_format_mode"]),
+        }
+    )
 
 
 def classify_probe_result(exit_code: int, stderr: str) -> tuple[str, str]:

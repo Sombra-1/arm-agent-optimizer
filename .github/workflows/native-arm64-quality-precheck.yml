@@ -128,9 +128,14 @@ jobs:
           python scripts/quality_precheck.py resolve-contract \
             --contract "$OUTPUT_CONTRACT" >> "$profile_environment"
           cat "$profile_environment" >> "$GITHUB_ENV"
-          source "$profile_environment"
-          echo "MODEL_PATH=$MODEL_DIR/$MODEL_FILENAME" >> "$GITHUB_ENV"
-          rm -f "$profile_environment"
+          model_filename=$(
+            sed -n 's/^MODEL_FILENAME=//p' "$profile_environment"
+          )
+          [[ -n "$model_filename" ]]
+          [[ "$model_filename" != *$'\n'* ]]
+          [[ "$model_filename" != *$'\r'* ]]
+          echo "MODEL_PATH=$MODEL_DIR/$model_filename" >> "$GITHUB_ENV"
+          rm -f -- "$profile_environment"
 
       - name: Fetch pinned official llama.cpp source
         shell: bash
@@ -383,6 +388,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$MODEL_DIR" "$MODEL_CACHE_DIR"
+          touch "$RUNNER_TEMP/model-download-started"
           curl \
             --fail \
             --location \
@@ -668,22 +674,50 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          model_path="${MODEL_PATH:-}"
+          baseline_dir="${BASELINE_DIR:-}"
+          model_dir="${MODEL_DIR:-}"
+          model_cache_dir="${MODEL_CACHE_DIR:-}"
+          evidence_dir="${EVIDENCE_DIR:-$RUNNER_TEMP/aarchtune-quality-precheck-evidence}"
+          model_path_initialized=$([[ -n "$model_path" ]] && echo true || echo false)
+          model_download_started=$(
+            [[ -e "$RUNNER_TEMP/model-download-started" ]] && echo true || echo false
+          )
+          model_existed=$([[ -n "$model_path" && -e "$model_path" ]] && echo true || echo false)
+          model_cache_existed=$(
+            [[ -n "$model_cache_dir" && -e "$model_cache_dir" ]] && echo true || echo false
+          )
+          response_evidence_existed=$(
+            [[ -n "$baseline_dir" && -e "$baseline_dir" ]] && echo true || echo false
+          )
+          probe_output_existed=false
+          if [[ -e "$RUNNER_TEMP/llama-cli-probe.stdout" ||
+                -e "$RUNNER_TEMP/llama-cli-probe.stderr" ]]; then
+            probe_output_existed=true
+          fi
+          license_evidence_source_existed=$(
+            [[ -e "$RUNNER_TEMP/model-license-evidence" ]] && echo true || echo false
+          )
           cleanup_ok=true
+          mkdir -p "$evidence_dir"
           for pgid_file in \
             "$RUNNER_TEMP/aarchtune-probe.pgid" \
             "$RUNNER_TEMP/aarchtune-baseline.pgid"; do
             [[ -f "$pgid_file" ]] || continue
             pgid=$(<"$pgid_file")
-            [[ "$pgid" =~ ^[0-9]+$ ]]
+            if [[ ! "$pgid" =~ ^[0-9]+$ ]]; then
+              cleanup_ok=false
+              continue
+            fi
             if kill -0 -- "-$pgid" 2>/dev/null; then
-              kill -TERM -- "-$pgid"
+              kill -TERM -- "-$pgid" 2>/dev/null || true
               for _ in {1..20}; do
                 kill -0 -- "-$pgid" 2>/dev/null || break
                 sleep 0.5
               done
             fi
             if kill -0 -- "-$pgid" 2>/dev/null; then
-              kill -KILL -- "-$pgid"
+              kill -KILL -- "-$pgid" 2>/dev/null || cleanup_ok=false
             fi
             if ps -eo pgid= | awk -v owned="$pgid" '
               $1 == owned { found=1 }
@@ -692,7 +726,7 @@ jobs:
               cleanup_ok=false
             fi
           done
-          rm -f \
+          rm -f -- \
             "$RUNNER_TEMP/llama-cli-probe.stdout" \
             "$RUNNER_TEMP/llama-cli-probe.stderr" \
             "$RUNNER_TEMP/aarchtune-baseline.stdout" \
@@ -702,26 +736,95 @@ jobs:
             "$RUNNER_TEMP/model-license-evidence" \
             "$RUNNER_TEMP/model-verification.json" \
             "$RUNNER_TEMP/gguf-metadata-verification.json" \
-            "$RUNNER_TEMP/model-probe-classification.json"
-          find "$BASELINE_DIR" -type f -name 'server.log' -delete 2>/dev/null || true
-          rm -rf "$BASELINE_DIR"
-          rm -f "$MODEL_PATH"
-          rm -rf "$MODEL_DIR" "$MODEL_CACHE_DIR"
-          [[ ! -d "$BASELINE_DIR" ]]
-          [[ ! -e "$MODEL_PATH" ]]
-          [[ ! -d "$MODEL_CACHE_DIR" ]]
-          [[ ! -e "$RUNNER_TEMP/model-license-evidence" ]]
+            "$RUNNER_TEMP/model-probe-classification.json" \
+            "$RUNNER_TEMP/model-download-started" || cleanup_ok=false
+          if [[ -n "$baseline_dir" && -d "$baseline_dir" ]]; then
+            find "$baseline_dir" -type f -name 'server.log' -delete 2>/dev/null || true
+            rm -rf -- "$baseline_dir" || cleanup_ok=false
+          fi
+          if [[ -n "$model_path" ]]; then
+            rm -f -- "$model_path" || cleanup_ok=false
+          fi
+          if [[ -n "$model_dir" ]]; then
+            rm -rf -- "$model_dir" || cleanup_ok=false
+          fi
+          if [[ -n "$model_cache_dir" ]]; then
+            rm -rf -- "$model_cache_dir" || cleanup_ok=false
+          fi
+          if [[ -n "$baseline_dir" && -e "$baseline_dir" ]]; then
+            cleanup_ok=false
+          fi
+          if [[ -n "$model_path" && -e "$model_path" ]]; then
+            cleanup_ok=false
+          fi
+          if [[ -n "$model_dir" && -e "$model_dir" ]]; then
+            cleanup_ok=false
+          fi
+          if [[ -n "$model_cache_dir" && -e "$model_cache_dir" ]]; then
+            cleanup_ok=false
+          fi
+          if [[ -e "$RUNNER_TEMP/model-license-evidence" ]]; then
+            cleanup_ok=false
+          fi
+          model_deleted=$(
+            if [[ "$model_existed" == false ]]; then
+              echo not_created
+            elif [[ -n "$model_path" && ! -e "$model_path" ]]; then
+              echo true
+            else
+              echo false
+            fi
+          )
+          model_cache_deleted=$(
+            if [[ "$model_cache_existed" == false ]]; then
+              echo not_created
+            elif [[ -n "$model_cache_dir" && ! -e "$model_cache_dir" ]]; then
+              echo true
+            else
+              echo false
+            fi
+          )
+          response_evidence_deleted=$(
+            if [[ "$response_evidence_existed" == false ]]; then
+              echo not_created
+            elif [[ -n "$baseline_dir" && ! -e "$baseline_dir" ]]; then
+              echo true
+            else
+              echo false
+            fi
+          )
+          probe_output_deleted=$(
+            if [[ "$probe_output_existed" == false ]]; then
+              echo not_created
+            elif [[ ! -e "$RUNNER_TEMP/llama-cli-probe.stdout" &&
+                    ! -e "$RUNNER_TEMP/llama-cli-probe.stderr" ]]; then
+              echo true
+            else
+              echo false
+            fi
+          )
+          license_evidence_source_deleted=$(
+            if [[ "$license_evidence_source_existed" == false ]]; then
+              echo not_created
+            elif [[ ! -e "$RUNNER_TEMP/model-license-evidence" ]]; then
+              echo true
+            else
+              echo false
+            fi
+          )
           {
             echo "tracked_process_groups_stopped=$cleanup_ok"
             echo "samplers_stopped=$cleanup_ok"
-            echo "model_deleted=true"
-            echo "model_cache_deleted=true"
-            echo "response_evidence_deleted=true"
-            echo "probe_output_deleted=true"
-            echo "temporary_server_logs_deleted=true"
-            echo "license_evidence_source_deleted=true"
+            echo "model_path_initialized=$model_path_initialized"
+            echo "model_download_started=$model_download_started"
+            echo "model_deleted=$model_deleted"
+            echo "model_cache_deleted=$model_cache_deleted"
+            echo "response_evidence_deleted=$response_evidence_deleted"
+            echo "probe_output_deleted=$probe_output_deleted"
+            echo "temporary_server_logs_deleted=$response_evidence_deleted"
+            echo "license_evidence_source_deleted=$license_evidence_source_deleted"
             echo "cleanup_complete=$cleanup_ok"
-          } > "$EVIDENCE_DIR/cleanup-proof.txt"
+          } > "$evidence_dir/cleanup-proof.txt"
           [[ "$cleanup_ok" == true ]]
 
       - name: Write summary and privacy-scan artifact
