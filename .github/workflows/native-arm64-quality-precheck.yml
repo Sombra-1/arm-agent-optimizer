@@ -9,6 +9,7 @@ on:
         type: choice
         default: qwen2.5-14b-q3-k-m
         options:
+          - mistral-nemo-12b-q4-k-m
           - qwen2.5-14b-q3-k-m
           - qwen2.5-7b-q3-k-m
       output_contract:
@@ -150,6 +151,27 @@ jobs:
           [[ "$tag_commit" == "$LLAMA_COMMIT" ]]
           grep -q 'option(GGML_CPU_KLEIDIAI' "$LLAMA_SOURCE_DIR/ggml/CMakeLists.txt"
           grep -Rqs 'LLM_ARCH_QWEN2' "$LLAMA_SOURCE_DIR/src"
+          if [[ "$MODEL_PROFILE" == mistral-nemo-12b-q4-k-m ]]; then
+            grep -Fq '{ LLM_ARCH_LLAMA,            "llama"' \
+              "$LLAMA_SOURCE_DIR/src/llama-arch.cpp"
+            grep -Fq 'tokenizer_model == "gpt2"' \
+              "$LLAMA_SOURCE_DIR/src/llama-vocab.cpp"
+            grep -Fq 'LLM_CHAT_TEMPLATE_MISTRAL_V3_TEKKEN' \
+              "$LLAMA_SOURCE_DIR/src/llama-chat.cpp"
+            grep -Fq 'if (role == "system")' \
+              "$LLAMA_SOURCE_DIR/src/llama-chat.cpp"
+            grep -Fq 'POST `/v1/chat/completions`' \
+              "$LLAMA_SOURCE_DIR/tools/server/README.md"
+            {
+              echo "source_commit=$LLAMA_COMMIT"
+              echo "gguf_architecture=llama"
+              echo "gguf_tokenizer_model=gpt2"
+              echo "embedded_chat_template=mistral-v3-tekken-compatible"
+              echo "initial_system_message_supported=true"
+              echo "endpoint=/v1/chat/completions"
+              echo "cpu_inference_supported=true"
+            } > "$EVIDENCE_DIR/llama-build/model-runtime-compatibility.txt"
+          fi
           if [[ "$OUTPUT_CONTRACT" == json_object ]]; then
             server_common="$LLAMA_SOURCE_DIR/tools/server/server-common.cpp"
             chat_source="$LLAMA_SOURCE_DIR/common/chat.cpp"
@@ -266,6 +288,40 @@ jobs:
               select(.rfilename == $filename) |
               .size == $size and .lfs.size == $size and .lfs.sha256 == $sha256' \
             "$metadata"
+          if [[ -n "$GGUF_DECLARED_SOURCE_REPOSITORY" ]]; then
+            jq -e \
+              --arg source "$GGUF_DECLARED_SOURCE_REPOSITORY" \
+              '.cardData.base_model == $source or
+                (.cardData.base_model | type == "array" and index($source) != null)' \
+              "$metadata"
+          fi
+
+      - name: Verify immutable source-model provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_metadata="$RUNNER_TEMP/source-model-metadata.json"
+          curl \
+            --fail \
+            --location \
+            --retry 3 \
+            --retry-all-errors \
+            --connect-timeout 30 \
+            --max-time 120 \
+            --output "$source_metadata" \
+            "https://huggingface.co/api/models/$SOURCE_MODEL_REPOSITORY/revision/$SOURCE_MODEL_REVISION"
+          jq -e --arg revision "$SOURCE_MODEL_REVISION" \
+            '.sha == $revision' "$source_metadata"
+          jq -n \
+            --arg repository "$SOURCE_MODEL_REPOSITORY" \
+            --arg revision "$SOURCE_MODEL_REVISION" \
+            --arg model_name "$SOURCE_MODEL_NAME" \
+            '{
+              source_repository: $repository,
+              source_revision: $revision,
+              source_model_name: $model_name,
+              source_verified: true
+            }' > "$EVIDENCE_DIR/source-model-provenance.json"
 
       - name: Verify immutable license evidence
         shell: bash
@@ -343,13 +399,11 @@ jobs:
             --sha256 "$MODEL_SHA256" > "$RUNNER_TEMP/model-verification.json"
           [[ -f "$MODEL_PATH" ]]
           [[ $(basename "$MODEL_PATH") == "$MODEL_FILENAME" ]]
-          grep -aFq 'general.architecture' "$MODEL_PATH"
-          grep -aFq 'tokenizer.chat_template' "$MODEL_PATH"
-          grep -aFq '<|im_start|>' "$MODEL_PATH"
-          thinking_markers_present=false
-          if grep -aFq '<think>' "$MODEL_PATH"; then
-            thinking_markers_present=true
-          fi
+          gguf_metadata="$RUNNER_TEMP/gguf-metadata-verification.json"
+          python scripts/quality_precheck.py verify-gguf-metadata \
+            --profile "$MODEL_PROFILE" \
+            --path "$MODEL_PATH" > "$gguf_metadata"
+          thinking_markers_present=$(jq -r '.thinking_markers_present' "$gguf_metadata")
           disk_available_after=$(
             df -B1 --output=avail "$RUNNER_TEMP" | tail -n 1 | tr -d ' '
           )
@@ -371,6 +425,19 @@ jobs:
             --arg license_path "$LICENSE_PATH" \
             --arg license_evidence_sha256 "$LICENSE_EVIDENCE_SHA256" \
             --arg parameter_class "$MODEL_PARAMETER_CLASS" \
+            --arg model_label "$MODEL_LABEL" \
+            --arg source_repository "$SOURCE_MODEL_REPOSITORY" \
+            --arg source_revision "$SOURCE_MODEL_REVISION" \
+            --arg source_model_name "$SOURCE_MODEL_NAME" \
+            --arg architecture "$(jq -r '.architecture' "$gguf_metadata")" \
+            --arg tokenizer_model "$(jq -r '.tokenizer_model' "$gguf_metadata")" \
+            --arg general_name "$(jq -r '.general_name' "$gguf_metadata")" \
+            --arg embedded_base_model_name \
+              "$(jq -r '.embedded_base_model_name // empty' "$gguf_metadata")" \
+            --arg embedded_base_model_repository \
+              "$(jq -r '.embedded_base_model_repository // empty' "$gguf_metadata")" \
+            --argjson initial_system_message_supported \
+              "$(jq '.initial_system_message_supported' "$gguf_metadata")" \
             --arg sha256 "$MODEL_SHA256" \
             --argjson thinking_markers_present "$thinking_markers_present" \
             --argjson size_bytes "$MODEL_SIZE_BYTES" \
@@ -388,9 +455,20 @@ jobs:
               license_evidence_sha256: $license_evidence_sha256,
               license_verified: true,
               parameter_class: $parameter_class,
+              model_label: $model_label,
+              source_repository: $source_repository,
+              source_revision: $source_revision,
+              source_model_name: $source_model_name,
+              source_verified: true,
+              architecture: $architecture,
+              tokenizer_model: $tokenizer_model,
+              general_name: $general_name,
+              embedded_base_model_name: $embedded_base_model_name,
+              embedded_base_model_repository: $embedded_base_model_repository,
               size_bytes: $size_bytes,
               sha256: $sha256,
               native_chat_template_present: true,
+              initial_system_message_supported: $initial_system_message_supported,
               thinking_markers_present: $thinking_markers_present,
               verified: true
             }' > "$EVIDENCE_DIR/model-provenance.json"
@@ -512,6 +590,19 @@ jobs:
                 failed_policy_checks: []
               }' > "$quality_dir/quality-policy-outcome.json"
             printf '[]\n' > "$quality_dir/per-task-classifications.json"
+          elif [[ "${PRECHECK_OUTCOME:-quality_evidence_incomplete}" == model_runtime_incompatible ]]; then
+            jq -n \
+              --arg outcome model_runtime_incompatible \
+              --arg output_contract "$OUTPUT_CONTRACT" \
+              --arg reason "Pinned model failed the bounded runtime compatibility probe" \
+              '{
+                outcome: $outcome,
+                aggregate: null,
+                output_contract: $output_contract,
+                evidence_errors: [$reason],
+                failed_policy_checks: []
+              }' > "$quality_dir/quality-policy-outcome.json"
+            printf '[]\n' > "$quality_dir/per-task-classifications.json"
           elif [[ -f "$BASELINE_DIR/failure.json" ]] \
             && jq -e '.error_type == "ResponseFormatUnsupportedError"' \
               "$BASELINE_DIR/failure.json" > /dev/null; then
@@ -607,8 +698,10 @@ jobs:
             "$RUNNER_TEMP/aarchtune-baseline.stdout" \
             "$RUNNER_TEMP/aarchtune-baseline.stderr" \
             "$RUNNER_TEMP/model-metadata.json" \
+            "$RUNNER_TEMP/source-model-metadata.json" \
             "$RUNNER_TEMP/model-license-evidence" \
             "$RUNNER_TEMP/model-verification.json" \
+            "$RUNNER_TEMP/gguf-metadata-verification.json" \
             "$RUNNER_TEMP/model-probe-classification.json"
           find "$BASELINE_DIR" -type f -name 'server.log' -delete 2>/dev/null || true
           rm -rf "$BASELINE_DIR"
@@ -663,6 +756,10 @@ jobs:
             echo "model_revision=$MODEL_REVISION"
             echo "model_quantization=$MODEL_QUANTIZATION"
             echo "model_parameter_class=$MODEL_PARAMETER_CLASS"
+            echo "model_label=$MODEL_LABEL"
+            echo "source_model_repository=$SOURCE_MODEL_REPOSITORY"
+            echo "source_model_revision=$SOURCE_MODEL_REVISION"
+            echo "source_model_name=$SOURCE_MODEL_NAME"
             echo "model_size_bytes=$MODEL_SIZE_BYTES"
             echo "model_sha256=$MODEL_SHA256"
             echo "model_license=$MODEL_LICENSE"
@@ -691,7 +788,7 @@ jobs:
             echo "- Architecture: \`$(cat "$EVIDENCE_DIR/runner/uname-m.txt" 2>/dev/null || echo unavailable)\`"
             echo "- Model profile: \`$MODEL_PROFILE\`"
             echo "- Output contract: \`$OUTPUT_CONTRACT\`"
-            echo "- Model: \`Qwen2.5-$MODEL_PARAMETER_CLASS-Instruct $MODEL_QUANTIZATION\`"
+            echo "- Model: \`$MODEL_LABEL\`"
             echo "- Quality outcome: \`$outcome\`"
             echo "- Duration: \`$duration_seconds seconds\`"
             if [[ -f "$EVIDENCE_DIR/quality/validated-quality.json" ]]; then
@@ -766,7 +863,7 @@ jobs:
             jq -r '.outcome' "$EVIDENCE_DIR/quality/quality-policy-outcome.json"
           )
           case "$outcome" in
-            quality_policy_passed|quality_policy_failed|quality_evidence_incomplete|resource_incompatible|response_format_unsupported) ;;
+            quality_policy_passed|quality_policy_failed|quality_evidence_incomplete|resource_incompatible|model_runtime_incompatible|response_format_unsupported) ;;
             *) exit 1 ;;
           esac
           [[ "$outcome" == "quality_policy_passed" ]]

@@ -7,10 +7,11 @@ import argparse
 import hashlib
 import json
 import re
+import struct
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 import yaml
 
@@ -50,6 +51,15 @@ HISTORICAL_QUALITY_REFERENCES = (
         "json_validity_rate": 0.8,
         "validator_pass_rate": 0.72,
     },
+    {
+        "model_label": "Qwen2.5-7B-Instruct Q3_K_M",
+        "output_contract": "json_object",
+        "source": "separate earlier native run",
+        "request_success_rate": 1.0,
+        "task_success_rate": 0.4,
+        "json_validity_rate": 0.8,
+        "validator_pass_rate": 0.72,
+    },
 )
 
 
@@ -68,6 +78,13 @@ class LicenseEvidence:
 
 
 @dataclass(frozen=True)
+class SourceModelProvenance:
+    repository: str
+    revision: str
+    model_name: str
+
+
+@dataclass(frozen=True)
 class ModelProfile:
     repository: str
     revision: str
@@ -76,7 +93,14 @@ class ModelProfile:
     size_bytes: int
     sha256: str
     license_evidence: LicenseEvidence
+    source_model: SourceModelProvenance
     parameter_class: str
+    model_label: str
+    architecture: str
+    tokenizer_model: str
+    chat_template_marker: str
+    requires_initial_system_support: bool
+    declared_source_repository: str = ""
 
     @property
     def url(self) -> str:
@@ -107,7 +131,17 @@ MODEL_PROFILES = {
             license_id="apache-2.0",
             license_name="Apache-2.0",
         ),
+        source_model=SourceModelProvenance(
+            repository="Qwen/Qwen2.5-7B-Instruct",
+            revision="a09a35458c702b33eeacc393d103063234e8bc28",
+            model_name="Qwen2.5-7B-Instruct",
+        ),
         parameter_class="7B",
+        model_label="Qwen2.5-7B-Instruct Q3_K_M",
+        architecture="qwen2",
+        tokenizer_model="gpt2",
+        chat_template_marker="<|im_start|>",
+        requires_initial_system_support=False,
     ),
     "qwen2.5-14b-q3-k-m": ModelProfile(
         repository="bartowski/Qwen2.5-14B-Instruct-GGUF",
@@ -124,7 +158,45 @@ MODEL_PROFILES = {
             license_id="apache-2.0",
             license_name="Apache-2.0",
         ),
+        source_model=SourceModelProvenance(
+            repository="Qwen/Qwen2.5-14B-Instruct",
+            revision="cf98f3b3bbb457ad9e2bb7baf9a0125b6b88caa8",
+            model_name="Qwen2.5-14B-Instruct",
+        ),
         parameter_class="14B",
+        model_label="Qwen2.5-14B-Instruct Q3_K_M",
+        architecture="qwen2",
+        tokenizer_model="gpt2",
+        chat_template_marker="<|im_start|>",
+        requires_initial_system_support=False,
+    ),
+    "mistral-nemo-12b-q4-k-m": ModelProfile(
+        repository="bartowski/Mistral-Nemo-Instruct-2407-GGUF",
+        revision="a2dd64a0a76ea1bdb2bb6ab6fa5496b003c7c908",
+        filename="Mistral-Nemo-Instruct-2407-Q4_K_M.gguf",
+        quantization="Q4_K_M",
+        size_bytes=7_477_208_192,
+        sha256="7c1a10d202d8788dbe5628dc962254d10654c853cae6aaeca0618f05490d4a46",
+        license_evidence=LicenseEvidence(
+            repository="bartowski/Mistral-Nemo-Instruct-2407-GGUF",
+            revision="a2dd64a0a76ea1bdb2bb6ab6fa5496b003c7c908",
+            path="README.md",
+            sha256="987b63374b1441d14b35efa83705bd6732768f53f8e5b731f818d7181e1f5b2e",
+            license_id="apache-2.0",
+            license_name="Apache-2.0",
+        ),
+        source_model=SourceModelProvenance(
+            repository="mistralai/Mistral-Nemo-Instruct-2407",
+            revision="04d8a90549d23fc6bd7f642064003592df51e9b3",
+            model_name="Mistral-Nemo-Instruct-2407",
+        ),
+        parameter_class="12B",
+        model_label="Mistral-Nemo-Instruct-2407 12B Q4_K_M",
+        architecture="llama",
+        tokenizer_model="gpt2",
+        chat_template_marker="[INST]",
+        requires_initial_system_support=True,
+        declared_source_repository="mistralai/Mistral-Nemo-Instruct-2407",
     ),
 }
 
@@ -175,6 +247,23 @@ def get_model_profile(name: str) -> ModelProfile:
         raise ValueError(f"license evidence ID is empty: {name}")
     if not evidence.repository.strip() or not evidence.license_name.strip():
         raise ValueError(f"license evidence provenance is incomplete: {name}")
+    source = profile.source_model
+    if not source.repository.strip() or not source.model_name.strip():
+        raise ValueError(f"source model provenance is incomplete: {name}")
+    if not full_sha.fullmatch(source.revision):
+        raise ValueError(f"source model revision is not immutable: {name}")
+    if profile.size_bytes <= 0 or not sha256.fullmatch(profile.sha256):
+        raise ValueError(f"model artifact identity is invalid: {name}")
+    if not all(
+        (
+            profile.model_label.strip(),
+            profile.parameter_class.strip(),
+            profile.architecture.strip(),
+            profile.tokenizer_model.strip(),
+            profile.chat_template_marker.strip(),
+        )
+    ):
+        raise ValueError(f"model profile provenance is incomplete: {name}")
     return profile
 
 
@@ -189,6 +278,15 @@ def profile_environment(name: str) -> dict[str, str]:
         "MODEL_QUANTIZATION": profile.quantization,
         "MODEL_LICENSE": profile.license,
         "MODEL_LICENSE_ID": profile.license_id,
+        "MODEL_LABEL": profile.model_label,
+        "MODEL_ARCHITECTURE": profile.architecture,
+        "MODEL_TOKENIZER": profile.tokenizer_model,
+        "MODEL_CHAT_TEMPLATE_MARKER": profile.chat_template_marker,
+        "MODEL_REQUIRES_INITIAL_SYSTEM": str(profile.requires_initial_system_support).lower(),
+        "GGUF_DECLARED_SOURCE_REPOSITORY": profile.declared_source_repository,
+        "SOURCE_MODEL_REPOSITORY": profile.source_model.repository,
+        "SOURCE_MODEL_REVISION": profile.source_model.revision,
+        "SOURCE_MODEL_NAME": profile.source_model.model_name,
         "LICENSE_REPOSITORY": profile.license_evidence.repository,
         "LICENSE_REVISION": profile.license_evidence.revision,
         "LICENSE_PATH": profile.license_evidence.path,
@@ -231,7 +329,7 @@ def classify_probe_result(exit_code: int, stderr: str) -> tuple[str, str]:
         return "probe_timeout", "quality_evidence_incomplete"
     if exit_code in {9, 137} or any(marker in lowered for marker in resource_markers):
         return "resource_incompatible", "resource_incompatible"
-    return "model_probe_failed", "quality_evidence_incomplete"
+    return "model_probe_failed", "model_runtime_incompatible"
 
 
 def verify_model(path: Path, expected_size: int, expected_sha256: str) -> dict[str, Any]:
@@ -297,6 +395,117 @@ def verify_license(path: Path, evidence: LicenseEvidence) -> dict[str, Any]:
         "license_path": evidence.path,
         "license_evidence_sha256": digest,
         "license_verified": True,
+    }
+
+
+_GGUF_SCALAR_FORMATS = {
+    0: "B",
+    1: "b",
+    2: "H",
+    3: "h",
+    4: "I",
+    5: "i",
+    6: "f",
+    7: "?",
+    10: "Q",
+    11: "q",
+    12: "d",
+}
+
+
+def _read_struct(handle: BinaryIO, format_code: str) -> Any:
+    size = struct.calcsize(f"<{format_code}")
+    payload = handle.read(size)
+    if len(payload) != size:
+        raise ValueError("GGUF metadata is truncated")
+    return struct.unpack(f"<{format_code}", payload)[0]
+
+
+def _read_gguf_string(handle: BinaryIO) -> str:
+    size = _read_struct(handle, "Q")
+    payload = handle.read(size)
+    if len(payload) != size:
+        raise ValueError("GGUF metadata string is truncated")
+    return payload.decode("utf-8", errors="strict")
+
+
+def _read_gguf_value(handle: BinaryIO, value_type: int, *, retain: bool = True) -> Any:
+    if value_type in _GGUF_SCALAR_FORMATS:
+        value = _read_struct(handle, _GGUF_SCALAR_FORMATS[value_type])
+        return value if retain else None
+    if value_type == 8:
+        value = _read_gguf_string(handle)
+        return value if retain else None
+    if value_type == 9:
+        subtype = _read_struct(handle, "I")
+        count = _read_struct(handle, "Q")
+        if subtype in _GGUF_SCALAR_FORMATS:
+            handle.seek(struct.calcsize(f"<{_GGUF_SCALAR_FORMATS[subtype]}") * count, 1)
+        else:
+            for _ in range(count):
+                _read_gguf_value(handle, subtype, retain=False)
+        return None
+    raise ValueError(f"unsupported GGUF metadata value type: {value_type}")
+
+
+def verify_gguf_metadata(path: Path, profile: ModelProfile) -> dict[str, Any]:
+    """Verify required model metadata without retaining the embedded template."""
+
+    if not path.is_file():
+        raise ValueError(f"model file does not exist: {path}")
+    wanted = {
+        "general.architecture",
+        "general.name",
+        "general.base_model.0.name",
+        "general.base_model.0.repo_url",
+        "tokenizer.ggml.model",
+        "tokenizer.chat_template",
+    }
+    observed: dict[str, Any] = {}
+    with path.open("rb") as model:
+        if model.read(4) != b"GGUF":
+            raise ValueError("model file is not GGUF")
+        version = _read_struct(model, "I")
+        if version not in {2, 3}:
+            raise ValueError(f"unsupported GGUF version: {version}")
+        _read_struct(model, "Q")
+        metadata_count = _read_struct(model, "Q")
+        for _ in range(metadata_count):
+            key = _read_gguf_string(model)
+            value_type = _read_struct(model, "I")
+            value = _read_gguf_value(model, value_type, retain=key in wanted)
+            if key in wanted:
+                observed[key] = value
+    architecture = observed.get("general.architecture")
+    if architecture != profile.architecture:
+        raise ValueError(
+            f"GGUF architecture mismatch: expected {profile.architecture}, observed {architecture}"
+        )
+    tokenizer = observed.get("tokenizer.ggml.model")
+    if tokenizer != profile.tokenizer_model:
+        raise ValueError(
+            f"GGUF tokenizer mismatch: expected {profile.tokenizer_model}, observed {tokenizer}"
+        )
+    template = observed.get("tokenizer.chat_template")
+    if not isinstance(template, str) or profile.chat_template_marker not in template:
+        raise ValueError("GGUF embedded chat template is missing or incompatible")
+    initial_system_supported = (
+        'messages[0]["role"] == "system"' in template
+        or "messages[0]['role'] == 'system'" in template
+    )
+    if profile.requires_initial_system_support and not initial_system_supported:
+        raise ValueError("GGUF chat template does not support an initial system message")
+    return {
+        "architecture": architecture,
+        "tokenizer_model": tokenizer,
+        "general_name": observed.get("general.name"),
+        "embedded_base_model_name": observed.get("general.base_model.0.name"),
+        "embedded_base_model_repository": observed.get("general.base_model.0.repo_url"),
+        "native_chat_template_present": True,
+        "chat_template_marker_verified": True,
+        "initial_system_message_supported": initial_system_supported,
+        "thinking_markers_present": "<think>" in template,
+        "verified": True,
     }
 
 
@@ -677,7 +886,7 @@ def write_comparison_summary(
     aggregate = outcome.get("aggregate")
     current = {
         "model_profile": profile_name,
-        "model_label": f"Qwen2.5-{profile.parameter_class}-Instruct {profile.quantization}",
+        "model_label": profile.model_label,
         "parameter_class": profile.parameter_class,
         "quantization": profile.quantization,
         "output_contract": output_contract,
@@ -716,6 +925,9 @@ def _parser() -> argparse.ArgumentParser:
     verify_license_parser = subparsers.add_parser("verify-license")
     verify_license_parser.add_argument("--profile", required=True)
     verify_license_parser.add_argument("--path", type=Path, required=True)
+    verify_metadata = subparsers.add_parser("verify-gguf-metadata")
+    verify_metadata.add_argument("--profile", required=True)
+    verify_metadata.add_argument("--path", type=Path, required=True)
     sanitize = subparsers.add_parser("sanitize")
     sanitize.add_argument("--baseline-dir", type=Path, required=True)
     sanitize.add_argument("--policy", type=Path, required=True)
@@ -749,6 +961,10 @@ def main() -> int:
     if args.command == "verify-license":
         profile = get_model_profile(args.profile)
         print(json.dumps(verify_license(args.path, profile.license_evidence), sort_keys=True))
+        return 0
+    if args.command == "verify-gguf-metadata":
+        profile = get_model_profile(args.profile)
+        print(json.dumps(verify_gguf_metadata(args.path, profile), sort_keys=True))
         return 0
     if args.command == "resolve-profile":
         for key, value in profile_environment(args.profile).items():

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import struct
 import subprocess
 import sys
 from dataclasses import replace
@@ -70,6 +71,7 @@ def test_model_profiles_are_allowlisted_immutable_and_exact() -> None:
     dispatch = workflow["on"]["workflow_dispatch"]["inputs"]["model_profile"]
     assert dispatch["default"] == "qwen2.5-14b-q3-k-m"
     assert dispatch["options"] == [
+        "mistral-nemo-12b-q4-k-m",
         "qwen2.5-14b-q3-k-m",
         "qwen2.5-7b-q3-k-m",
     ]
@@ -97,7 +99,22 @@ def test_model_profiles_are_allowlisted_immutable_and_exact() -> None:
     assert fourteen.license == "Apache-2.0"
     assert fourteen.license_evidence.revision == "05244aa5d871c661c80082a15d3bce44714d068d"
     assert fourteen.parameter_class == "14B"
-    for profile in (seven, fourteen):
+    mistral = helper.get_model_profile("mistral-nemo-12b-q4-k-m")
+    assert mistral.repository == "bartowski/Mistral-Nemo-Instruct-2407-GGUF"
+    assert mistral.revision == "a2dd64a0a76ea1bdb2bb6ab6fa5496b003c7c908"
+    assert mistral.filename == "Mistral-Nemo-Instruct-2407-Q4_K_M.gguf"
+    assert mistral.quantization == "Q4_K_M"
+    assert mistral.size_bytes == 7_477_208_192
+    assert mistral.sha256 == ("7c1a10d202d8788dbe5628dc962254d10654c853cae6aaeca0618f05490d4a46")
+    assert mistral.source_model.repository == "mistralai/Mistral-Nemo-Instruct-2407"
+    assert mistral.source_model.revision == "04d8a90549d23fc6bd7f642064003592df51e9b3"
+    assert mistral.license_evidence.sha256 == (
+        "987b63374b1441d14b35efa83705bd6732768f53f8e5b731f818d7181e1f5b2e"
+    )
+    assert mistral.architecture == "llama"
+    assert mistral.tokenizer_model == "gpt2"
+    assert mistral.requires_initial_system_support is True
+    for profile in (seven, fourteen, mistral):
         assert len(profile.revision) == 40
         assert profile.revision not in {"main", "latest"}
         assert f"/resolve/{profile.revision}/" in profile.url
@@ -105,6 +122,7 @@ def test_model_profiles_are_allowlisted_immutable_and_exact() -> None:
         assert "latest" not in profile.url
         assert len(profile.license_evidence.revision) == 40
         assert f"/resolve/{profile.license_evidence.revision}/" in profile.license_evidence.url
+        assert len(profile.source_model.revision) == 40
     with pytest.raises(ValueError, match="not allowlisted"):
         helper.get_model_profile("arbitrary/repository")
 
@@ -209,6 +227,73 @@ def test_model_profile_rejects_invalid_license_provenance(
     )
     with pytest.raises(ValueError, match=message):
         helper.get_model_profile("invalid-license")
+
+
+@pytest.mark.parametrize(
+    ("profile_update", "source_update", "message"),
+    [
+        ({"size_bytes": 0}, {}, "artifact identity is invalid"),
+        ({"sha256": ""}, {}, "artifact identity is invalid"),
+        ({}, {"revision": "main"}, "source model revision is not immutable"),
+        ({}, {"repository": ""}, "source model provenance is incomplete"),
+        ({}, {"model_name": ""}, "source model provenance is incomplete"),
+    ],
+)
+def test_model_profile_rejects_invalid_artifact_or_source_provenance(
+    profile_update: dict[str, object],
+    source_update: dict[str, str],
+    message: str,
+) -> None:
+    helper = _helper()
+    profile = helper.MODEL_PROFILES["mistral-nemo-12b-q4-k-m"]
+    helper.MODEL_PROFILES["invalid-provenance"] = replace(
+        profile,
+        source_model=replace(profile.source_model, **source_update),
+        **profile_update,
+    )
+    with pytest.raises(ValueError, match=message):
+        helper.get_model_profile("invalid-provenance")
+
+
+def _write_synthetic_gguf(path: Path, metadata: dict[str, str]) -> None:
+    with path.open("wb") as output:
+        output.write(b"GGUF")
+        output.write(struct.pack("<IQQ", 3, 0, len(metadata)))
+        for key, value in metadata.items():
+            key_bytes = key.encode()
+            value_bytes = value.encode()
+            output.write(struct.pack("<Q", len(key_bytes)))
+            output.write(key_bytes)
+            output.write(struct.pack("<IQ", 8, len(value_bytes)))
+            output.write(value_bytes)
+
+
+def test_mistral_gguf_metadata_and_system_template_are_verified(tmp_path: Path) -> None:
+    helper = _helper()
+    profile = helper.get_model_profile("mistral-nemo-12b-q4-k-m")
+    model = tmp_path / profile.filename
+    _write_synthetic_gguf(
+        model,
+        {
+            "general.architecture": "llama",
+            "general.name": "Mistral Nemo Instruct 2407",
+            "tokenizer.ggml.model": "gpt2",
+            "tokenizer.chat_template": (
+                '{% if messages[0]["role"] == "system" %}'
+                '{{ "[INST]" + messages[0]["content"] }}{% endif %}'
+            ),
+        },
+    )
+    result = helper.verify_gguf_metadata(model, profile)
+    assert result["architecture"] == "llama"
+    assert result["tokenizer_model"] == "gpt2"
+    assert result["native_chat_template_present"] is True
+    assert result["initial_system_message_supported"] is True
+    assert "chat_template" not in result
+
+    wrong = replace(profile, architecture="qwen2")
+    with pytest.raises(ValueError, match="architecture mismatch"):
+        helper.verify_gguf_metadata(model, wrong)
 
 
 def test_output_contracts_are_allowlisted_and_dispatch_is_typed() -> None:
@@ -392,7 +477,7 @@ def test_probe_resource_incompatibility_is_distinct_from_quality_failure() -> No
     )
     assert helper.classify_probe_result(2, "unrelated failure") == (
         "model_probe_failed",
-        "quality_evidence_incomplete",
+        "model_runtime_incompatible",
     )
 
 
@@ -428,6 +513,11 @@ def test_workflow_is_baseline_only_and_cleanup_always_runs() -> None:
     assert "retention-days: 14" in text
     assert "resource_incompatible" in text
     assert "response_format_unsupported" in text
+    assert "model_runtime_incompatible" in text
+    assert "Verify immutable source-model provenance" in text
+    assert "source-model-provenance.json" in text
+    assert "verify-gguf-metadata" in text
+    assert "LLM_CHAT_TEMPLATE_MISTRAL_V3_TEKKEN" in text
     assert ".cardData.license" not in text
     assert "Verify immutable license evidence" in text
     assert ".size == $size and .lfs.size == $size and .lfs.sha256 == $sha256" in text
@@ -454,7 +544,12 @@ def test_license_source_is_cleaned_and_only_sanitized_provenance_is_public() -> 
     assert "license_evidence_source_deleted=true" in text
     assert "$EVIDENCE_DIR/model-license-evidence" not in text
     assert "full README" not in text
-    assert "LICENSE_EVIDENCE_URL" not in text[text.index("jq -n \\") :]
+    provenance_block = text[
+        text.index("jq -n \\", text.index("Download and verify pinned model")) : text.index(
+            "Probe model loading on CPU"
+        )
+    ]
+    assert "LICENSE_EVIDENCE_URL" not in provenance_block
 
 
 def test_public_binary_checksums_use_relative_names(tmp_path: Path) -> None:
@@ -556,10 +651,14 @@ def test_historical_comparison_is_labelled_and_not_combined(tmp_path: Path) -> N
         0.0,
         0.4,
         0.4,
+        0.4,
     ]
-    assert all(
-        item["output_contract"] == "prompt_only" for item in comparison["historical_references"]
-    )
+    assert [item["output_contract"] for item in comparison["historical_references"]] == [
+        "prompt_only",
+        "prompt_only",
+        "prompt_only",
+        "json_object",
+    ]
     assert all(
         item["source"] == "separate earlier native run"
         for item in comparison["historical_references"]
