@@ -166,10 +166,13 @@ jobs:
           for binary in llama-server llama-cli; do
             path="$LLAMA_BUILD_DIR/bin/$binary"
             [[ -x "$path" ]]
-            sha256sum "$path" >> "$EVIDENCE_DIR/checksums/llama-binaries.sha256"
             "$path" --version > "$RUNNER_TEMP/$binary-version.txt" 2>&1
             grep -q "${LLAMA_COMMIT:0:7}" "$RUNNER_TEMP/$binary-version.txt"
           done
+          (
+            cd "$LLAMA_BUILD_DIR/bin"
+            sha256sum llama-server llama-cli
+          ) > "$EVIDENCE_DIR/llama-build/binaries.sha256"
           {
             echo "build_status=success"
             echo "kleidiai_build_enabled=true"

@@ -161,6 +161,37 @@ def test_workflow_is_baseline_only_and_cleanup_always_runs() -> None:
     assert "retention-days: 14" in text
 
 
+def test_public_binary_checksums_use_relative_names(tmp_path: Path) -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert 'cd "$LLAMA_BUILD_DIR/bin"' in text
+    assert "sha256sum llama-server llama-cli" in text
+    assert 'sha256sum "$path"' not in text
+
+    binary_dir = tmp_path / "absolute" / "runner" / "build" / "bin"
+    binary_dir.mkdir(parents=True)
+    (binary_dir / "llama-server").write_bytes(b"server")
+    (binary_dir / "llama-cli").write_bytes(b"cli")
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            '(cd "$1" && sha256sum llama-server llama-cli)',
+            "checksum-test",
+            str(binary_dir),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "/home/runner/" not in result.stdout
+    assert "/opt/hostedtoolcache/" not in result.stdout
+    assert str(tmp_path) not in result.stdout
+    assert "llama-server" in result.stdout
+    assert "llama-cli" in result.stdout
+    assert len(result.stdout.splitlines()[0].split()[0]) == 64
+    assert len(result.stdout.splitlines()[1].split()[0]) == 64
+
+
 def _matches(pattern: str, text: str) -> bool:
     result = subprocess.run(
         ["grep", "-Eq", pattern],
