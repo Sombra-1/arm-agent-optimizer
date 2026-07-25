@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,68 @@ EXPECTED_TASKS = 5
 EXPECTED_REPETITIONS = 2
 EXPECTED_ATTEMPTS = EXPECTED_TASKS * EXPECTED_REPETITIONS
 
+HISTORICAL_QUALITY_REFERENCES = (
+    {
+        "model_label": "Qwen2.5-1.5B-Instruct Q4_K_M",
+        "source": "separate earlier native run",
+        "request_success_rate": 1.0,
+        "task_success_rate": 0.0,
+        "json_validity_rate": 0.3,
+        "validator_pass_rate": 0.48,
+    },
+    {
+        "model_label": "Qwen2.5-7B-Instruct Q3_K_M",
+        "source": "separate earlier native run",
+        "request_success_rate": 1.0,
+        "task_success_rate": 0.4,
+        "json_validity_rate": 0.8,
+        "validator_pass_rate": 0.72,
+    },
+)
+
+
+@dataclass(frozen=True)
+class ModelProfile:
+    repository: str
+    revision: str
+    filename: str
+    quantization: str
+    size_bytes: int
+    sha256: str
+    license: str
+    license_id: str
+    parameter_class: str
+
+    @property
+    def url(self) -> str:
+        return f"https://huggingface.co/{self.repository}/resolve/{self.revision}/{self.filename}"
+
+
+MODEL_PROFILES = {
+    "qwen2.5-7b-q3-k-m": ModelProfile(
+        repository="Qwen/Qwen2.5-7B-Instruct-GGUF",
+        revision="293ca9a10157b0e5fc5cb32af8b636a88bede891",
+        filename="qwen2.5-7b-instruct-q3_k_m.gguf",
+        quantization="Q3_K_M",
+        size_bytes=3_808_391_072,
+        sha256="a96b16179dc6cc9afdf0cf7a96a80c199cbd00b9be207c3465be21cb721cca5e",
+        license="Apache-2.0",
+        license_id="apache-2.0",
+        parameter_class="7B",
+    ),
+    "qwen2.5-14b-q3-k-m": ModelProfile(
+        repository="bartowski/Qwen2.5-14B-Instruct-GGUF",
+        revision="05244aa5d871c661c80082a15d3bce44714d068d",
+        filename="Qwen2.5-14B-Instruct-Q3_K_M.gguf",
+        quantization="Q3_K_M",
+        size_bytes=7_339_204_736,
+        sha256="2f68ac3ba018f7de7641229f19adafde5e59d02bbf5651fdbcc510bb9f3facca",
+        license="Apache-2.0",
+        license_id="apache-2.0",
+        parameter_class="14B",
+    ),
+}
+
 _CLASSIFICATION_ORDER = (
     "request_failed",
     "timeout",
@@ -28,6 +91,56 @@ _CLASSIFICATION_ORDER = (
     "wrong_allowed_value",
     "forbidden_text_present",
 )
+
+
+def get_model_profile(name: str) -> ModelProfile:
+    """Resolve one immutable allowlisted model profile."""
+
+    try:
+        profile = MODEL_PROFILES[name]
+    except KeyError as error:
+        raise ValueError(f"model profile is not allowlisted: {name}") from error
+    if profile.revision in {"main", "latest"} or len(profile.revision) != 40:
+        raise ValueError(f"model profile revision is not immutable: {name}")
+    return profile
+
+
+def profile_environment(name: str) -> dict[str, str]:
+    """Return the fixed workflow environment for one allowlisted profile."""
+
+    profile = get_model_profile(name)
+    return {
+        "MODEL_REPOSITORY": profile.repository,
+        "MODEL_REVISION": profile.revision,
+        "MODEL_FILENAME": profile.filename,
+        "MODEL_QUANTIZATION": profile.quantization,
+        "MODEL_LICENSE": profile.license,
+        "MODEL_LICENSE_ID": profile.license_id,
+        "MODEL_PARAMETER_CLASS": profile.parameter_class,
+        "MODEL_SIZE_BYTES": str(profile.size_bytes),
+        "MODEL_SHA256": profile.sha256,
+        "MODEL_URL": profile.url,
+    }
+
+
+def classify_probe_result(exit_code: int, stderr: str) -> tuple[str, str]:
+    """Classify a bounded model-load probe without preserving its output."""
+
+    lowered = stderr.lower()
+    resource_markers = (
+        "out of memory",
+        "cannot allocate memory",
+        "std::bad_alloc",
+        "memory allocation failed",
+        "killed",
+    )
+    if exit_code == 0:
+        return "model_loaded", "quality_evidence_incomplete"
+    if exit_code == 124:
+        return "probe_timeout", "quality_evidence_incomplete"
+    if exit_code in {9, 137} or any(marker in lowered for marker in resource_markers):
+        return "resource_incompatible", "resource_incompatible"
+    return "model_probe_failed", "quality_evidence_incomplete"
 
 
 def verify_model(path: Path, expected_size: int, expected_sha256: str) -> dict[str, Any]:
@@ -220,7 +333,21 @@ def sanitize_baseline(
     per_task: list[dict[str, Any]] = []
     for task_id in sorted({str(item.get("task_id")) for item in records}):
         attempts = [classify_attempt(item) for item in records if item.get("task_id") == task_id]
-        per_task.append({"task_id": task_id, "attempts": attempts})
+        classification_counts = {
+            classification: sum(
+                classification in attempt["classifications"] for attempt in attempts
+            )
+            for classification in _CLASSIFICATION_ORDER
+        }
+        per_task.append(
+            {
+                "task_id": task_id,
+                "attempts_completed": len(attempts),
+                "attempts_passed": sum(attempt["task_passed"] is True for attempt in attempts),
+                "classifications": classification_counts,
+                "attempts": attempts,
+            }
+        )
 
     sanitized_manifest = {
         "schema_version": manifest.schema_version,
@@ -263,6 +390,47 @@ def sanitize_baseline(
     return outcome
 
 
+def write_comparison_summary(
+    profile_name: str,
+    quality_outcome_path: Path,
+    output_path: Path,
+    duration_seconds: int,
+) -> None:
+    """Write current metrics beside clearly separate historical references."""
+
+    profile = get_model_profile(profile_name)
+    outcome = _load_json(quality_outcome_path)
+    aggregate = outcome.get("aggregate")
+    current = {
+        "model_profile": profile_name,
+        "model_label": f"Qwen2.5-{profile.parameter_class}-Instruct {profile.quantization}",
+        "parameter_class": profile.parameter_class,
+        "quantization": profile.quantization,
+        "policy_result": outcome.get("outcome"),
+        "duration_seconds": duration_seconds,
+    }
+    for metric in (
+        "request_success_rate",
+        "task_success_rate",
+        "json_validity_rate",
+        "validator_pass_rate",
+        "timeout_rate",
+        "completed_attempt_fraction",
+    ):
+        current[metric] = aggregate.get(metric) if isinstance(aggregate, dict) else None
+    report = {
+        "comparison_type": "historical_reference_only",
+        "benchmark": False,
+        "statistical_combination": False,
+        "current": current,
+        "historical_references": list(HISTORICAL_QUALITY_REFERENCES),
+    }
+    output_path.write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -274,6 +442,16 @@ def _parser() -> argparse.ArgumentParser:
     sanitize.add_argument("--baseline-dir", type=Path, required=True)
     sanitize.add_argument("--policy", type=Path, required=True)
     sanitize.add_argument("--output-dir", type=Path, required=True)
+    resolve = subparsers.add_parser("resolve-profile")
+    resolve.add_argument("--profile", required=True)
+    probe = subparsers.add_parser("classify-probe")
+    probe.add_argument("--exit-code", type=int, required=True)
+    probe.add_argument("--stderr", type=Path, required=True)
+    comparison = subparsers.add_parser("comparison")
+    comparison.add_argument("--profile", required=True)
+    comparison.add_argument("--quality-outcome", type=Path, required=True)
+    comparison.add_argument("--output", type=Path, required=True)
+    comparison.add_argument("--duration-seconds", type=int, required=True)
     return parser
 
 
@@ -281,6 +459,25 @@ def main() -> int:
     args = _parser().parse_args()
     if args.command == "verify-model":
         print(json.dumps(verify_model(args.path, args.size, args.sha256), sort_keys=True))
+        return 0
+    if args.command == "resolve-profile":
+        for key, value in profile_environment(args.profile).items():
+            print(f"{key}={value}")
+        return 0
+    if args.command == "classify-probe":
+        classification, outcome = classify_probe_result(
+            args.exit_code,
+            args.stderr.read_text(encoding="utf-8", errors="replace"),
+        )
+        print(json.dumps({"classification": classification, "outcome": outcome}, sort_keys=True))
+        return 0
+    if args.command == "comparison":
+        write_comparison_summary(
+            args.profile,
+            args.quality_outcome,
+            args.output,
+            args.duration_seconds,
+        )
         return 0
     outcome = sanitize_baseline(args.baseline_dir, args.policy, args.output_dir)
     print(outcome)

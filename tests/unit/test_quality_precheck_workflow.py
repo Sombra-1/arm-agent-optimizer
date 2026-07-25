@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import subprocess
+import sys
 from pathlib import Path
 from types import ModuleType
 
@@ -22,6 +23,7 @@ def _helper() -> ModuleType:
     spec = importlib.util.spec_from_file_location("quality_precheck", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -57,25 +59,46 @@ def _baseline(
     return output
 
 
-def test_model_pin_is_immutable_and_exact() -> None:
+def test_model_profiles_are_allowlisted_immutable_and_exact() -> None:
+    helper = _helper()
     workflow = _workflow()
-    job = workflow["jobs"]["quality-precheck"]
-    environment = job["env"]
-    assert environment["MODEL_REPOSITORY"] == "Qwen/Qwen2.5-7B-Instruct-GGUF"
-    assert environment["MODEL_REVISION"] == "293ca9a10157b0e5fc5cb32af8b636a88bede891"
-    assert environment["MODEL_FILENAME"] == "qwen2.5-7b-instruct-q3_k_m.gguf"
-    assert environment["MODEL_SIZE_BYTES"] == "3808391072"
-    assert environment["MODEL_SHA256"] == (
-        "a96b16179dc6cc9afdf0cf7a96a80c199cbd00b9be207c3465be21cb721cca5e"
-    )
-    assert f"/resolve/{environment['MODEL_REVISION']}/" in environment["MODEL_URL"]
-    assert "/main/" not in environment["MODEL_URL"]
-    assert "latest" not in environment["MODEL_URL"]
+    dispatch = workflow["on"]["workflow_dispatch"]["inputs"]["model_profile"]
+    assert dispatch["default"] == "qwen2.5-14b-q3-k-m"
+    assert dispatch["options"] == [
+        "qwen2.5-14b-q3-k-m",
+        "qwen2.5-7b-q3-k-m",
+    ]
+
+    seven = helper.get_model_profile("qwen2.5-7b-q3-k-m")
+    assert seven.repository == "Qwen/Qwen2.5-7B-Instruct-GGUF"
+    assert seven.revision == "293ca9a10157b0e5fc5cb32af8b636a88bede891"
+    assert seven.filename == "qwen2.5-7b-instruct-q3_k_m.gguf"
+    assert seven.size_bytes == 3_808_391_072
+    assert seven.sha256 == ("a96b16179dc6cc9afdf0cf7a96a80c199cbd00b9be207c3465be21cb721cca5e")
+    fourteen = helper.get_model_profile("qwen2.5-14b-q3-k-m")
+    assert fourteen.repository == "bartowski/Qwen2.5-14B-Instruct-GGUF"
+    assert fourteen.revision == "05244aa5d871c661c80082a15d3bce44714d068d"
+    assert fourteen.filename == "Qwen2.5-14B-Instruct-Q3_K_M.gguf"
+    assert fourteen.quantization == "Q3_K_M"
+    assert fourteen.size_bytes == 7_339_204_736
+    assert fourteen.sha256 == ("2f68ac3ba018f7de7641229f19adafde5e59d02bbf5651fdbcc510bb9f3facca")
+    assert fourteen.license == "Apache-2.0"
+    assert fourteen.parameter_class == "14B"
+    for profile in (seven, fourteen):
+        assert len(profile.revision) == 40
+        assert profile.revision not in {"main", "latest"}
+        assert f"/resolve/{profile.revision}/" in profile.url
+        assert "/main/" not in profile.url
+        assert "latest" not in profile.url
+    with pytest.raises(ValueError, match="not allowlisted"):
+        helper.get_model_profile("arbitrary/repository")
 
 
 def test_model_size_and_sha_mismatches_fail(tmp_path: Path) -> None:
     helper = _helper()
     model = tmp_path / "model.gguf"
+    with pytest.raises(ValueError, match="does not exist"):
+        helper.verify_model(model, 0, "0" * 64)
     model.write_bytes(b"not a model")
     with pytest.raises(ValueError, match="size mismatch"):
         helper.verify_model(model, 1, "0" * 64)
@@ -136,7 +159,34 @@ def test_failed_validators_are_preserved_without_response_content(
     assert outcome == "quality_policy_failed"
     assert all("exact_value" in item["failed_validators"] for item in incident["attempts"])
     assert all("wrong_allowed_value" in item["classifications"] for item in incident["attempts"])
+    assert incident["attempts_completed"] == 2
+    assert incident["attempts_passed"] == 0
+    assert incident["classifications"]["wrong_allowed_value"] == 2
     assert "unknown" not in json.dumps(classifications)
+
+
+def test_probe_resource_incompatibility_is_distinct_from_quality_failure() -> None:
+    helper = _helper()
+    assert helper.classify_probe_result(0, "") == (
+        "model_loaded",
+        "quality_evidence_incomplete",
+    )
+    assert helper.classify_probe_result(137, "Killed") == (
+        "resource_incompatible",
+        "resource_incompatible",
+    )
+    assert helper.classify_probe_result(1, "std::bad_alloc") == (
+        "resource_incompatible",
+        "resource_incompatible",
+    )
+    assert helper.classify_probe_result(124, "") == (
+        "probe_timeout",
+        "quality_evidence_incomplete",
+    )
+    assert helper.classify_probe_result(2, "unrelated failure") == (
+        "model_probe_failed",
+        "quality_evidence_incomplete",
+    )
 
 
 def test_workflow_is_baseline_only_and_cleanup_always_runs() -> None:
@@ -148,7 +198,17 @@ def test_workflow_is_baseline_only_and_cleanup_always_runs() -> None:
         for item in steps
         if item.get("name") == "Clean up workflow-owned processes and sensitive evidence"
     )
+    privacy = next(
+        item for item in steps if item.get("name") == "Write summary and privacy-scan artifact"
+    )
+    upload = next(
+        item
+        for item in steps
+        if item.get("name") == "Upload sanitized native Arm64 quality evidence"
+    )
     assert cleanup["if"] == "always()"
+    assert privacy["if"] == "always()"
+    assert upload["if"] == "always() && steps.privacy_scan.outcome == 'success'"
     assert "aarchtune baseline \\" in text
     assert "aarchtune optimize " not in text
     assert "aarchtune screen " not in text
@@ -159,6 +219,12 @@ def test_workflow_is_baseline_only_and_cleanup_always_runs() -> None:
     assert "killall" not in text
     assert "raw-attempts.jsonl" in text
     assert "retention-days: 14" in text
+    assert "resource_incompatible" in text
+    assert "response_format" not in text
+    assert "--grammar" not in text
+    assert "--json-schema" not in text
+    assert "pkill" not in text
+    assert "killall" not in text
 
 
 def test_public_binary_checksums_use_relative_names(tmp_path: Path) -> None:
@@ -217,3 +283,48 @@ def test_privacy_scan_allows_placeholders_and_rejects_values() -> None:
     assert _matches(assignment, "HF_TOKEN=actual-value")
     assert _matches(assignment, '"HF_TOKEN": "actual-value"')
     assert _matches(general, "Authorization: Bearer actual-value")
+    assert _matches(general, "Bearer actual-value")
+    assert _matches(general, "/home/runner/work/_temp/private")
+    assert _matches(general, "/opt/hostedtoolcache/Python")
+    assert _matches(general, "/home/ayx/private")
+    assert _matches(general, "/tmp/a0b1c2d3-1234-5678-9012-abcdefabcdef")
+
+
+def test_historical_comparison_is_labelled_and_not_combined(tmp_path: Path) -> None:
+    helper = _helper()
+    quality = tmp_path / "quality-policy-outcome.json"
+    quality.write_text(
+        json.dumps(
+            {
+                "outcome": "quality_policy_failed",
+                "aggregate": {
+                    "request_success_rate": 1.0,
+                    "task_success_rate": 0.6,
+                    "json_validity_rate": 0.9,
+                    "validator_pass_rate": 0.8,
+                    "timeout_rate": 0.0,
+                    "completed_attempt_fraction": 1.0,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    output = tmp_path / "comparison.json"
+    helper.write_comparison_summary(
+        "qwen2.5-14b-q3-k-m",
+        quality,
+        output,
+        123,
+    )
+    comparison = json.loads(output.read_text(encoding="utf-8"))
+    assert comparison["benchmark"] is False
+    assert comparison["statistical_combination"] is False
+    assert comparison["current"]["task_success_rate"] == 0.6
+    assert [item["task_success_rate"] for item in comparison["historical_references"]] == [
+        0.0,
+        0.4,
+    ]
+    assert all(
+        item["source"] == "separate earlier native run"
+        for item in comparison["historical_references"]
+    )

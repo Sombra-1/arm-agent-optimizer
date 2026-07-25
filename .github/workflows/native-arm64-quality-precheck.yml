@@ -2,6 +2,15 @@ name: Native Arm64 Model Quality Precheck
 
 on:
   workflow_dispatch:
+    inputs:
+      model_profile:
+        description: Immutable model profile
+        required: true
+        type: choice
+        default: qwen2.5-14b-q3-k-m
+        options:
+          - qwen2.5-14b-q3-k-m
+          - qwen2.5-7b-q3-k-m
 
 permissions:
   contents: read
@@ -18,16 +27,10 @@ jobs:
       LLAMA_REPOSITORY: https://github.com/ggml-org/llama.cpp.git
       LLAMA_RELEASE: b10106
       LLAMA_COMMIT: 1425386fd996511e1f3295e7366c38289a92a271
-      MODEL_REPOSITORY: Qwen/Qwen2.5-7B-Instruct-GGUF
-      MODEL_REVISION: 293ca9a10157b0e5fc5cb32af8b636a88bede891
-      MODEL_FILENAME: qwen2.5-7b-instruct-q3_k_m.gguf
-      MODEL_QUANTIZATION: Q3_K_M
-      MODEL_LICENSE: Apache-2.0
-      MODEL_SIZE_BYTES: "3808391072"
-      MODEL_SHA256: a96b16179dc6cc9afdf0cf7a96a80c199cbd00b9be207c3465be21cb721cca5e
-      MODEL_URL: https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/293ca9a10157b0e5fc5cb32af8b636a88bede891/qwen2.5-7b-instruct-q3_k_m.gguf
+      MODEL_PROFILE: ${{ inputs.model_profile }}
+      DISK_SAFETY_MARGIN_BYTES: "4294967296"
       ARTIFACT_NAME: aarchtune-arm64-quality-precheck-${{ github.run_id }}-${{ github.run_attempt }}
-      PUBLIC_EVIDENCE_SCAN_PATTERN: /home/runner/|/opt/hostedtoolcache/|Authorization:|Bearer([[:space:]]|$)|ghp_|github_pat_|BEGIN OPENSSH PRIVATE KEY|BEGIN PRIVATE KEY|/home/ayx|raw_response|response_body
+      PUBLIC_EVIDENCE_SCAN_PATTERN: /home/runner/|/opt/hostedtoolcache/|/home/ayx/|/tmp/|Authorization:|Bearer[[:space:]]+[^<[:space:]][^[:space:]]*|ghp_|github_pat_|BEGIN OPENSSH PRIVATE KEY|BEGIN PRIVATE KEY|raw_response|raw-response|response_body
       HF_TOKEN_ASSIGNMENT_PATTERN: "HF_TOKEN[\"']?[[:space:]]*[:=][[:space:]]*[\"']?[^<\"'[:space:]][^\"'[:space:]]*"
 
     steps:
@@ -35,6 +38,12 @@ jobs:
         uses: actions/checkout@v6
         with:
           persist-credentials: false
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
 
       - name: Initialize ephemeral paths
         shell: bash
@@ -45,11 +54,12 @@ jobs:
             echo "BASELINE_DIR=$RUNNER_TEMP/aarchtune-quality-precheck-baseline"
             echo "MODEL_DIR=$RUNNER_TEMP/aarchtune-quality-precheck-model"
             echo "MODEL_CACHE_DIR=$RUNNER_TEMP/aarchtune-quality-precheck-cache"
-            echo "MODEL_PATH=$RUNNER_TEMP/aarchtune-quality-precheck-model/$MODEL_FILENAME"
             echo "LLAMA_SOURCE_DIR=$RUNNER_TEMP/llama.cpp"
             echo "LLAMA_BUILD_DIR=$RUNNER_TEMP/llama.cpp-build"
             echo "HF_HOME=$RUNNER_TEMP/aarchtune-quality-precheck-cache/huggingface"
             echo "PRECHECK_STARTED_EPOCH=$(date +%s)"
+            echo "PRECHECK_BLOCKED=false"
+            echo "PRECHECK_OUTCOME=quality_evidence_incomplete"
           } >> "$GITHUB_ENV"
 
       - name: Prove native Arm64 and collect runner evidence
@@ -80,12 +90,6 @@ jobs:
           Not a performance benchmark
           EOF
 
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-          cache: pip
-
       - name: Install build dependencies and AArchTune
         shell: bash
         run: |
@@ -103,6 +107,18 @@ jobs:
           python -m pip install -e .
           aarchtune baseline --help > /dev/null
           aarchtune baseline validate --help > /dev/null
+
+      - name: Resolve allowlisted immutable model profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          profile_environment="$RUNNER_TEMP/model-profile.env"
+          python scripts/quality_precheck.py resolve-profile \
+            --profile "$MODEL_PROFILE" > "$profile_environment"
+          cat "$profile_environment" >> "$GITHUB_ENV"
+          source "$profile_environment"
+          echo "MODEL_PATH=$MODEL_DIR/$MODEL_FILENAME" >> "$GITHUB_ENV"
+          rm -f "$profile_environment"
 
       - name: Fetch pinned official llama.cpp source
         shell: bash
@@ -208,6 +224,10 @@ jobs:
             "https://huggingface.co/api/models/$MODEL_REPOSITORY/revision/$MODEL_REVISION?blobs=true"
           jq -e --arg revision "$MODEL_REVISION" '.sha == $revision' "$metadata"
           jq -e \
+            --arg license "$MODEL_LICENSE_ID" \
+            '.cardData.license == $license' \
+            "$metadata"
+          jq -e \
             --arg filename "$MODEL_FILENAME" \
             --arg sha256 "$MODEL_SHA256" \
             --argjson size "$MODEL_SIZE_BYTES" \
@@ -216,7 +236,43 @@ jobs:
               .size == $size and .lfs.size == $size and .lfs.sha256 == $sha256' \
             "$metadata"
 
-      - name: Download and verify pinned 7B model
+      - name: Enforce temporary-disk safety margin
+        shell: bash
+        run: |
+          set -euo pipefail
+          disk_available_before=$(
+            df -B1 --output=avail "$RUNNER_TEMP" | tail -n 1 | tr -d ' '
+          )
+          system_ram_bytes=$(free -b | awk '/^Mem:/ {print $2}')
+          ram_available_before=$(free -b | awk '/^Mem:/ {print $7}')
+          disk_required_bytes=$((MODEL_SIZE_BYTES + DISK_SAFETY_MARGIN_BYTES))
+          {
+            echo "disk_available_before_download_bytes=$disk_available_before"
+            echo "disk_required_bytes=$disk_required_bytes"
+            echo "disk_safety_margin_bytes=$DISK_SAFETY_MARGIN_BYTES"
+            echo "system_ram_bytes=$system_ram_bytes"
+            echo "ram_available_before_download_bytes=$ram_available_before"
+            echo "model_size_bytes=$MODEL_SIZE_BYTES"
+          } > "$EVIDENCE_DIR/runner/resource-evidence.txt"
+          if ((disk_available_before <= disk_required_bytes)); then
+            {
+              echo "probe_exit_code=not_run"
+              echo "model_load_classification=resource_incompatible"
+              echo "probe_status=resource_incompatible"
+              echo "model_loaded=false"
+              echo "cpu_inference=true"
+              echo "n_gpu_layers=0"
+              echo "generated_text_published=false"
+              echo "kleidiai_runtime_evidence=unknown"
+            } > "$EVIDENCE_DIR/model-load-status.txt"
+            {
+              echo "PRECHECK_BLOCKED=true"
+              echo "PRECHECK_OUTCOME=resource_incompatible"
+            } >> "$GITHUB_ENV"
+          fi
+
+      - name: Download and verify pinned model
+        if: env.PRECHECK_BLOCKED == 'false'
         shell: bash
         run: |
           set -euo pipefail
@@ -235,22 +291,36 @@ jobs:
             --path "$MODEL_PATH" \
             --size "$MODEL_SIZE_BYTES" \
             --sha256 "$MODEL_SHA256" > "$RUNNER_TEMP/model-verification.json"
+          [[ -f "$MODEL_PATH" ]]
+          [[ $(basename "$MODEL_PATH") == "$MODEL_FILENAME" ]]
           grep -aFq 'general.architecture' "$MODEL_PATH"
           grep -aFq 'tokenizer.chat_template' "$MODEL_PATH"
+          disk_available_after=$(
+            df -B1 --output=avail "$RUNNER_TEMP" | tail -n 1 | tr -d ' '
+          )
+          ram_available_after=$(free -b | awk '/^Mem:/ {print $7}')
+          {
+            echo "disk_available_after_download_bytes=$disk_available_after"
+            echo "ram_available_after_download_bytes=$ram_available_after"
+          } >> "$EVIDENCE_DIR/runner/resource-evidence.txt"
           jq -n \
+            --arg profile "$MODEL_PROFILE" \
             --arg repository "$MODEL_REPOSITORY" \
             --arg revision "$MODEL_REVISION" \
             --arg filename "$MODEL_FILENAME" \
             --arg quantization "$MODEL_QUANTIZATION" \
             --arg license "$MODEL_LICENSE" \
+            --arg parameter_class "$MODEL_PARAMETER_CLASS" \
             --arg sha256 "$MODEL_SHA256" \
             --argjson size_bytes "$MODEL_SIZE_BYTES" \
             '{
+              profile: $profile,
               repository: $repository,
               revision: $revision,
               filename: $filename,
               quantization: $quantization,
               license: $license,
+              parameter_class: $parameter_class,
               size_bytes: $size_bytes,
               sha256: $sha256,
               native_chat_template_present: true,
@@ -258,6 +328,7 @@ jobs:
             }' > "$EVIDENCE_DIR/model-provenance.json"
 
       - name: Probe model loading on CPU
+        if: env.PRECHECK_BLOCKED == 'false'
         shell: bash
         run: |
           set -euo pipefail
@@ -280,6 +351,8 @@ jobs:
           wait "$probe_pid"
           probe_exit=$?
           set -e
+          echo "ram_available_before_probe_bytes=$(free -b | awk '/^Mem:/ {print $7}')" \
+            >> "$EVIDENCE_DIR/runner/resource-evidence.txt"
           sed \
             -e "s#${RUNNER_TEMP}#\\$RUNNER_TEMP#g" \
             -e "s#${GITHUB_WORKSPACE}#\\$GITHUB_WORKSPACE#g" \
@@ -293,18 +366,38 @@ jobs:
             "$probe_stderr"; then
             kleidiai_status=verified
           fi
+          probe_result="$RUNNER_TEMP/model-probe-classification.json"
+          python scripts/quality_precheck.py classify-probe \
+            --exit-code "$probe_exit" \
+            --stderr "$probe_stderr" > "$probe_result"
+          load_classification=$(jq -r '.classification' "$probe_result")
+          precheck_outcome=$(jq -r '.outcome' "$probe_result")
+          case "$load_classification" in
+            model_loaded) probe_status=probe_passed ;;
+            probe_timeout) probe_status=probe_timeout ;;
+            resource_incompatible) probe_status=resource_incompatible ;;
+            *) probe_status=process_failure ;;
+          esac
           {
             echo "probe_exit_code=$probe_exit"
-            echo "model_loaded=$([[ $probe_exit -eq 0 ]] && echo true || echo false)"
+            echo "model_load_classification=$load_classification"
+            echo "probe_status=$probe_status"
+            echo "model_loaded=$([[ $load_classification == model_loaded ]] && echo true || echo false)"
             echo "cpu_inference=true"
             echo "n_gpu_layers=0"
             echo "generated_text_published=false"
             echo "kleidiai_runtime_evidence=$kleidiai_status"
           } > "$EVIDENCE_DIR/model-load-status.txt"
           echo "KLEIDIAI_RUNTIME_STATUS=$kleidiai_status" >> "$GITHUB_ENV"
-          [[ "$probe_exit" -eq 0 ]]
+          if [[ "$load_classification" != model_loaded ]]; then
+            {
+              echo "PRECHECK_BLOCKED=true"
+              echo "PRECHECK_OUTCOME=$precheck_outcome"
+            } >> "$GITHUB_ENV"
+          fi
 
       - name: Run baseline quality only
+        if: env.PRECHECK_BLOCKED == 'false'
         shell: bash
         run: |
           set -euo pipefail
@@ -337,7 +430,18 @@ jobs:
           set -euo pipefail
           quality_dir="$EVIDENCE_DIR/quality"
           mkdir -p "$quality_dir"
-          if [[ -f "$BASELINE_DIR/baseline-summary.json" \
+          if [[ "${PRECHECK_OUTCOME:-quality_evidence_incomplete}" == resource_incompatible ]]; then
+            jq -n \
+              --arg outcome resource_incompatible \
+              --arg reason "Pinned model is incompatible with available runner resources" \
+              '{
+                outcome: $outcome,
+                aggregate: null,
+                evidence_errors: [$reason],
+                failed_policy_checks: []
+              }' > "$quality_dir/quality-policy-outcome.json"
+            printf '[]\n' > "$quality_dir/per-task-classifications.json"
+          elif [[ -f "$BASELINE_DIR/baseline-summary.json" \
                 && -f "$BASELINE_DIR/manifest.json" \
                 && -f "$BASELINE_DIR/raw-attempts.jsonl" ]]; then
             set +e
@@ -354,7 +458,7 @@ jobs:
           fi
           if [[ ! -f "$quality_dir/quality-policy-outcome.json" ]]; then
             jq -n \
-              --arg outcome quality_evidence_incomplete \
+              --arg outcome "${PRECHECK_OUTCOME:-quality_evidence_incomplete}" \
               --arg reason "Baseline did not produce complete schema-valid evidence" \
               '{
                 outcome: $outcome,
@@ -413,7 +517,9 @@ jobs:
             "$RUNNER_TEMP/aarchtune-baseline.stdout" \
             "$RUNNER_TEMP/aarchtune-baseline.stderr" \
             "$RUNNER_TEMP/model-metadata.json" \
-            "$RUNNER_TEMP/model-verification.json"
+            "$RUNNER_TEMP/model-verification.json" \
+            "$RUNNER_TEMP/model-probe-classification.json"
+          find "$BASELINE_DIR" -type f -name 'server.log' -delete 2>/dev/null || true
           rm -rf "$BASELINE_DIR"
           rm -f "$MODEL_PATH"
           rm -rf "$MODEL_DIR" "$MODEL_CACHE_DIR"
@@ -427,11 +533,13 @@ jobs:
             echo "model_cache_deleted=true"
             echo "response_evidence_deleted=true"
             echo "probe_output_deleted=true"
+            echo "temporary_server_logs_deleted=true"
             echo "cleanup_complete=$cleanup_ok"
           } > "$EVIDENCE_DIR/cleanup-proof.txt"
           [[ "$cleanup_ok" == true ]]
 
       - name: Write summary and privacy-scan artifact
+        id: privacy_scan
         if: always()
         shell: bash
         run: |
@@ -441,15 +549,22 @@ jobs:
           )
           ended_epoch=$(date +%s)
           duration_seconds=$((ended_epoch - PRECHECK_STARTED_EPOCH))
+          python scripts/quality_precheck.py comparison \
+            --profile "$MODEL_PROFILE" \
+            --quality-outcome "$EVIDENCE_DIR/quality/quality-policy-outcome.json" \
+            --output "$EVIDENCE_DIR/comparison-summary.json" \
+            --duration-seconds "$duration_seconds"
           {
             echo "workflow=native-arm64-quality-precheck"
             echo "purpose=model_suitability_only"
             echo "native_architecture=$(cat "$EVIDENCE_DIR/runner/uname-m.txt" 2>/dev/null || echo unavailable)"
             echo "llama_cpp_release=$LLAMA_RELEASE"
             echo "llama_cpp_commit=$LLAMA_COMMIT"
+            echo "model_profile=$MODEL_PROFILE"
             echo "model=$MODEL_REPOSITORY/$MODEL_FILENAME"
             echo "model_revision=$MODEL_REVISION"
             echo "model_quantization=$MODEL_QUANTIZATION"
+            echo "model_parameter_class=$MODEL_PARAMETER_CLASS"
             echo "model_size_bytes=$MODEL_SIZE_BYTES"
             echo "model_sha256=$MODEL_SHA256"
             echo "model_license=$MODEL_LICENSE"
@@ -468,7 +583,8 @@ jobs:
             echo "It is not an AArchTune optimization or performance benchmark."
             echo
             echo "- Architecture: \`$(cat "$EVIDENCE_DIR/runner/uname-m.txt" 2>/dev/null || echo unavailable)\`"
-            echo "- Model: \`Qwen2.5-7B-Instruct Q3_K_M\`"
+            echo "- Model profile: \`$MODEL_PROFILE\`"
+            echo "- Model: \`Qwen2.5-$MODEL_PARAMETER_CLASS-Instruct $MODEL_QUANTIZATION\`"
             echo "- Quality outcome: \`$outcome\`"
             echo "- Duration: \`$duration_seconds seconds\`"
             if [[ -f "$EVIDENCE_DIR/quality/validated-quality.json" ]]; then
@@ -487,6 +603,10 @@ jobs:
             echo "- Artifact: \`$ARTIFACT_NAME\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
+          (
+            cd "$EVIDENCE_DIR"
+            find . -type f -printf '%P\n' | sort
+          ) > "$EVIDENCE_DIR/artifact-inventory.txt"
           scan_results="$RUNNER_TEMP/aarchtune-quality-precheck-scan.txt"
           grep -RInE "$PUBLIC_EVIDENCE_SCAN_PATTERN" "$EVIDENCE_DIR" \
             > "$scan_results" || true
@@ -500,7 +620,10 @@ jobs:
           if find "$EVIDENCE_DIR" -type f \
             \( -name '*.gguf' -o -name 'raw-attempts.jsonl' \
                -o -name 'request-metrics.jsonl' -o -name 'process-samples.jsonl' \
-               -o -name 'server.log' -o -name '*stdout*' -o -name '*stderr*' \) |
+               -o -name 'server.log' -o -name 'raw-response*' \
+               -o -name '*stdout*' -o -name '*stderr*' \
+               -o -name '.env' -o -name 'env.txt' -o -name 'env.json' \
+               -o -name 'environment.txt' -o -name 'environment.json' \) |
             grep -q .; then
             echo "Forbidden model or runtime artifact found." >&2
             exit 1
@@ -511,10 +634,14 @@ jobs:
             echo "Response-derived fields found in public evidence." >&2
             exit 1
           fi
-          echo "forbidden_content_matches=0" > "$EVIDENCE_DIR/privacy-scan.txt"
+          {
+            echo "privacy_scan_passed=true"
+            echo "forbidden_content_matches=0"
+            echo "private_path_matches=0"
+          } > "$EVIDENCE_DIR/privacy-scan.txt"
 
       - name: Upload sanitized native Arm64 quality evidence
-        if: always()
+        if: always() && steps.privacy_scan.outcome == 'success'
         uses: actions/upload-artifact@v7
         with:
           name: ${{ env.ARTIFACT_NAME }}
@@ -531,4 +658,8 @@ jobs:
           outcome=$(
             jq -r '.outcome' "$EVIDENCE_DIR/quality/quality-policy-outcome.json"
           )
+          case "$outcome" in
+            quality_policy_passed|quality_policy_failed|quality_evidence_incomplete|resource_incompatible) ;;
+            *) exit 1 ;;
+          esac
           [[ "$outcome" == "quality_policy_passed" ]]
