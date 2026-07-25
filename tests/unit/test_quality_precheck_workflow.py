@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 from types import ModuleType
 
@@ -78,6 +80,13 @@ def test_model_profiles_are_allowlisted_immutable_and_exact() -> None:
     assert seven.filename == "qwen2.5-7b-instruct-q3_k_m.gguf"
     assert seven.size_bytes == 3_808_391_072
     assert seven.sha256 == ("a96b16179dc6cc9afdf0cf7a96a80c199cbd00b9be207c3465be21cb721cca5e")
+    assert seven.license_evidence.repository == "Qwen/Qwen2.5-7B-Instruct-GGUF"
+    assert seven.license_evidence.revision == "74ef91efd0899612867d6bb080ce5a2788ef6aa1"
+    assert seven.license_evidence.path == "README.md"
+    assert seven.license_evidence.sha256 == (
+        "b813de546b5f0a1d8c49307d428582fd649be627d9b33a60ecf807a3381af05e"
+    )
+    assert seven.license_evidence.license_id == "apache-2.0"
     fourteen = helper.get_model_profile("qwen2.5-14b-q3-k-m")
     assert fourteen.repository == "bartowski/Qwen2.5-14B-Instruct-GGUF"
     assert fourteen.revision == "05244aa5d871c661c80082a15d3bce44714d068d"
@@ -86,6 +95,7 @@ def test_model_profiles_are_allowlisted_immutable_and_exact() -> None:
     assert fourteen.size_bytes == 7_339_204_736
     assert fourteen.sha256 == ("2f68ac3ba018f7de7641229f19adafde5e59d02bbf5651fdbcc510bb9f3facca")
     assert fourteen.license == "Apache-2.0"
+    assert fourteen.license_evidence.revision == "05244aa5d871c661c80082a15d3bce44714d068d"
     assert fourteen.parameter_class == "14B"
     for profile in (seven, fourteen):
         assert len(profile.revision) == 40
@@ -93,8 +103,112 @@ def test_model_profiles_are_allowlisted_immutable_and_exact() -> None:
         assert f"/resolve/{profile.revision}/" in profile.url
         assert "/main/" not in profile.url
         assert "latest" not in profile.url
+        assert len(profile.license_evidence.revision) == 40
+        assert f"/resolve/{profile.license_evidence.revision}/" in profile.license_evidence.url
     with pytest.raises(ValueError, match="not allowlisted"):
         helper.get_model_profile("arbitrary/repository")
+
+
+def _license_evidence(
+    helper: ModuleType,
+    payload: bytes,
+    *,
+    revision: str = "a" * 40,
+    license_id: str = "apache-2.0",
+) -> object:
+    return helper.LicenseEvidence(
+        repository="Qwen/Qwen2.5-7B-Instruct-GGUF",
+        revision=revision,
+        path="README.md",
+        sha256=hashlib.sha256(payload).hexdigest(),
+        license_id=license_id,
+        license_name="Apache-2.0",
+    )
+
+
+def test_null_card_data_does_not_override_valid_pinned_license_evidence(
+    tmp_path: Path,
+) -> None:
+    helper = _helper()
+    model_metadata = {
+        "sha": "293ca9a10157b0e5fc5cb32af8b636a88bede891",
+        "cardData": {"license": None},
+    }
+    assert model_metadata["cardData"]["license"] is None
+    payload = b"---\nlicense: apache-2.0\n---\nPrivate model card details.\n"
+    source = tmp_path / "README.md"
+    source.write_bytes(payload)
+    result = helper.verify_license(source, _license_evidence(helper, payload))
+    assert result["license_id"] == "apache-2.0"
+    assert result["license_verified"] is True
+    assert "contents" not in result
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        (b"---\nname: test\n---\n", "license field is missing"),
+        (b"---\nlicense: null\n---\n", "license field is null or empty"),
+        (b"---\nlicense: mit\n---\n", "license ID mismatch"),
+        (b"license: apache-2.0\n", "front matter is missing"),
+        (b"---\nlicense: [\n---\n", "front matter is malformed"),
+    ],
+)
+def test_license_evidence_requires_valid_matching_yaml_front_matter(
+    tmp_path: Path,
+    payload: bytes,
+    message: str,
+) -> None:
+    helper = _helper()
+    source = tmp_path / "README.md"
+    source.write_bytes(payload)
+    with pytest.raises(ValueError, match=message):
+        helper.verify_license(source, _license_evidence(helper, payload))
+
+
+def test_license_evidence_rejects_missing_file_hash_mismatch_and_mutable_revision(
+    tmp_path: Path,
+) -> None:
+    helper = _helper()
+    payload = b"---\nlicense: apache-2.0\n---\n"
+    evidence = _license_evidence(helper, payload)
+    missing = tmp_path / "missing.md"
+    with pytest.raises(ValueError, match="does not exist"):
+        helper.verify_license(missing, evidence)
+
+    source = tmp_path / "README.md"
+    source.write_bytes(payload)
+    wrong_hash = replace(evidence, sha256="0" * 64)
+    with pytest.raises(ValueError, match="SHA-256 mismatch"):
+        helper.verify_license(source, wrong_hash)
+    for revision in ("main", "latest"):
+        mutable = replace(evidence, revision=revision)
+        with pytest.raises(ValueError, match="not immutable"):
+            helper.verify_license(source, mutable)
+
+
+@pytest.mark.parametrize(
+    ("replacement", "message"),
+    [
+        ({"revision": "main"}, "revision is not immutable"),
+        ({"revision": "latest"}, "revision is not immutable"),
+        ({"path": ""}, "path is empty"),
+        ({"sha256": "invalid"}, "SHA-256 is malformed"),
+        ({"license_id": ""}, "ID is empty"),
+    ],
+)
+def test_model_profile_rejects_invalid_license_provenance(
+    replacement: dict[str, str],
+    message: str,
+) -> None:
+    helper = _helper()
+    profile = helper.MODEL_PROFILES["qwen2.5-7b-q3-k-m"]
+    helper.MODEL_PROFILES["invalid-license"] = replace(
+        profile,
+        license_evidence=replace(profile.license_evidence, **replacement),
+    )
+    with pytest.raises(ValueError, match=message):
+        helper.get_model_profile("invalid-license")
 
 
 def test_output_contracts_are_allowlisted_and_dispatch_is_typed() -> None:
@@ -314,6 +428,14 @@ def test_workflow_is_baseline_only_and_cleanup_always_runs() -> None:
     assert "retention-days: 14" in text
     assert "resource_incompatible" in text
     assert "response_format_unsupported" in text
+    assert ".cardData.license" not in text
+    assert "Verify immutable license evidence" in text
+    assert ".size == $size and .lfs.size == $size and .lfs.sha256 == $sha256" in text
+    assert '--profile "$MODEL_PROFILE"' in text
+    assert '--path "$license_source"' in text
+    assert '"$RUNNER_TEMP/model-license-evidence"' in text
+    assert '> "$EVIDENCE_DIR/license-provenance.json"' in text
+    assert "LICENSE_EVIDENCE_URL" in text
     assert '--response-format "$RESPONSE_FORMAT_MODE"' in text
     assert 'if (response_type == "json_object")' in text
     assert 'json_schema = json_value(response_format, "schema", json::object());' in text
@@ -322,6 +444,17 @@ def test_workflow_is_baseline_only_and_cleanup_always_runs() -> None:
     assert "--json-schema" not in text
     assert "pkill" not in text
     assert "killall" not in text
+
+
+def test_license_source_is_cleaned_and_only_sanitized_provenance_is_public() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert 'license_source="$RUNNER_TEMP/model-license-evidence"' in text
+    assert '"$RUNNER_TEMP/model-license-evidence" \\' in text
+    assert '[[ ! -e "$RUNNER_TEMP/model-license-evidence" ]]' in text
+    assert "license_evidence_source_deleted=true" in text
+    assert "$EVIDENCE_DIR/model-license-evidence" not in text
+    assert "full README" not in text
+    assert "LICENSE_EVIDENCE_URL" not in text[text.index("jq -n \\") :]
 
 
 def test_public_binary_checksums_use_relative_names(tmp_path: Path) -> None:

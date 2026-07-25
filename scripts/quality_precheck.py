@@ -6,10 +6,13 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 from aarchtune.baseline.models import BaselineManifest, BaselineSummary
 from aarchtune.evaluation.quality_policy import load_quality_policy
@@ -51,6 +54,20 @@ HISTORICAL_QUALITY_REFERENCES = (
 
 
 @dataclass(frozen=True)
+class LicenseEvidence:
+    repository: str
+    revision: str
+    path: str
+    sha256: str
+    license_id: str
+    license_name: str
+
+    @property
+    def url(self) -> str:
+        return f"https://huggingface.co/{self.repository}/resolve/{self.revision}/{self.path}"
+
+
+@dataclass(frozen=True)
 class ModelProfile:
     repository: str
     revision: str
@@ -58,13 +75,20 @@ class ModelProfile:
     quantization: str
     size_bytes: int
     sha256: str
-    license: str
-    license_id: str
+    license_evidence: LicenseEvidence
     parameter_class: str
 
     @property
     def url(self) -> str:
         return f"https://huggingface.co/{self.repository}/resolve/{self.revision}/{self.filename}"
+
+    @property
+    def license(self) -> str:
+        return self.license_evidence.license_name
+
+    @property
+    def license_id(self) -> str:
+        return self.license_evidence.license_id
 
 
 MODEL_PROFILES = {
@@ -75,8 +99,14 @@ MODEL_PROFILES = {
         quantization="Q3_K_M",
         size_bytes=3_808_391_072,
         sha256="a96b16179dc6cc9afdf0cf7a96a80c199cbd00b9be207c3465be21cb721cca5e",
-        license="Apache-2.0",
-        license_id="apache-2.0",
+        license_evidence=LicenseEvidence(
+            repository="Qwen/Qwen2.5-7B-Instruct-GGUF",
+            revision="74ef91efd0899612867d6bb080ce5a2788ef6aa1",
+            path="README.md",
+            sha256="b813de546b5f0a1d8c49307d428582fd649be627d9b33a60ecf807a3381af05e",
+            license_id="apache-2.0",
+            license_name="Apache-2.0",
+        ),
         parameter_class="7B",
     ),
     "qwen2.5-14b-q3-k-m": ModelProfile(
@@ -86,8 +116,14 @@ MODEL_PROFILES = {
         quantization="Q3_K_M",
         size_bytes=7_339_204_736,
         sha256="2f68ac3ba018f7de7641229f19adafde5e59d02bbf5651fdbcc510bb9f3facca",
-        license="Apache-2.0",
-        license_id="apache-2.0",
+        license_evidence=LicenseEvidence(
+            repository="bartowski/Qwen2.5-14B-Instruct-GGUF",
+            revision="05244aa5d871c661c80082a15d3bce44714d068d",
+            path="README.md",
+            sha256="70cafd53867968a19d1af97f91eb1e282306b4a004438e8fde3600525a4e55d8",
+            license_id="apache-2.0",
+            license_name="Apache-2.0",
+        ),
         parameter_class="14B",
     ),
 }
@@ -124,8 +160,21 @@ def get_model_profile(name: str) -> ModelProfile:
         profile = MODEL_PROFILES[name]
     except KeyError as error:
         raise ValueError(f"model profile is not allowlisted: {name}") from error
-    if profile.revision in {"main", "latest"} or len(profile.revision) != 40:
+    full_sha = re.compile(r"^[0-9a-f]{40}$")
+    sha256 = re.compile(r"^[0-9a-f]{64}$")
+    if not full_sha.fullmatch(profile.revision):
         raise ValueError(f"model profile revision is not immutable: {name}")
+    evidence = profile.license_evidence
+    if not full_sha.fullmatch(evidence.revision):
+        raise ValueError(f"license evidence revision is not immutable: {name}")
+    if not evidence.path.strip():
+        raise ValueError(f"license evidence path is empty: {name}")
+    if not sha256.fullmatch(evidence.sha256):
+        raise ValueError(f"license evidence SHA-256 is malformed: {name}")
+    if not evidence.license_id.strip():
+        raise ValueError(f"license evidence ID is empty: {name}")
+    if not evidence.repository.strip() or not evidence.license_name.strip():
+        raise ValueError(f"license evidence provenance is incomplete: {name}")
     return profile
 
 
@@ -140,6 +189,11 @@ def profile_environment(name: str) -> dict[str, str]:
         "MODEL_QUANTIZATION": profile.quantization,
         "MODEL_LICENSE": profile.license,
         "MODEL_LICENSE_ID": profile.license_id,
+        "LICENSE_REPOSITORY": profile.license_evidence.repository,
+        "LICENSE_REVISION": profile.license_evidence.revision,
+        "LICENSE_PATH": profile.license_evidence.path,
+        "LICENSE_EVIDENCE_SHA256": profile.license_evidence.sha256,
+        "LICENSE_EVIDENCE_URL": profile.license_evidence.url,
         "MODEL_PARAMETER_CLASS": profile.parameter_class,
         "MODEL_SIZE_BYTES": str(profile.size_bytes),
         "MODEL_SHA256": profile.sha256,
@@ -196,6 +250,54 @@ def verify_model(path: Path, expected_size: int, expected_sha256: str) -> dict[s
     if digest != expected_sha256:
         raise ValueError(f"model SHA-256 mismatch: expected {expected_sha256}, observed {digest}")
     return {"size_bytes": size, "sha256": digest, "verified": True}
+
+
+def verify_license(path: Path, evidence: LicenseEvidence) -> dict[str, Any]:
+    """Verify an immutable repository license file without publishing its contents."""
+
+    if not re.fullmatch(r"[0-9a-f]{40}", evidence.revision):
+        raise ValueError("license evidence revision is not immutable")
+    if not path.is_file():
+        raise ValueError(f"license evidence file does not exist: {path}")
+    payload = path.read_bytes()
+    digest = hashlib.sha256(payload).hexdigest()
+    if digest != evidence.sha256:
+        raise ValueError(
+            f"license evidence SHA-256 mismatch: expected {evidence.sha256}, observed {digest}"
+        )
+    try:
+        text = payload.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ValueError("license evidence is not valid UTF-8") from error
+    lines = text.splitlines()
+    if not lines or lines[0] != "---":
+        raise ValueError("license evidence YAML front matter is missing")
+    try:
+        closing_index = lines[1:].index("---") + 1
+    except ValueError as error:
+        raise ValueError("license evidence YAML front matter is missing") from error
+    try:
+        front_matter = yaml.safe_load("\n".join(lines[1:closing_index]))
+    except yaml.YAMLError as error:
+        raise ValueError("license evidence YAML front matter is malformed") from error
+    if not isinstance(front_matter, dict) or "license" not in front_matter:
+        raise ValueError("license field is missing from evidence")
+    observed = front_matter["license"]
+    if not isinstance(observed, str) or not observed.strip():
+        raise ValueError("license field is null or empty")
+    if observed != evidence.license_id:
+        raise ValueError(
+            f"license ID mismatch: expected {evidence.license_id}, observed {observed}"
+        )
+    return {
+        "license_name": evidence.license_name,
+        "license_id": evidence.license_id,
+        "license_repository": evidence.repository,
+        "license_revision": evidence.revision,
+        "license_path": evidence.path,
+        "license_evidence_sha256": digest,
+        "license_verified": True,
+    }
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -611,6 +713,9 @@ def _parser() -> argparse.ArgumentParser:
     verify.add_argument("--path", type=Path, required=True)
     verify.add_argument("--size", type=int, required=True)
     verify.add_argument("--sha256", required=True)
+    verify_license_parser = subparsers.add_parser("verify-license")
+    verify_license_parser.add_argument("--profile", required=True)
+    verify_license_parser.add_argument("--path", type=Path, required=True)
     sanitize = subparsers.add_parser("sanitize")
     sanitize.add_argument("--baseline-dir", type=Path, required=True)
     sanitize.add_argument("--policy", type=Path, required=True)
@@ -640,6 +745,10 @@ def main() -> int:
     args = _parser().parse_args()
     if args.command == "verify-model":
         print(json.dumps(verify_model(args.path, args.size, args.sha256), sort_keys=True))
+        return 0
+    if args.command == "verify-license":
+        profile = get_model_profile(args.profile)
+        print(json.dumps(verify_license(args.path, profile.license_evidence), sort_keys=True))
         return 0
     if args.command == "resolve-profile":
         for key, value in profile_environment(args.profile).items():

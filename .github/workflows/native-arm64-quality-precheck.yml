@@ -259,10 +259,6 @@ jobs:
             "https://huggingface.co/api/models/$MODEL_REPOSITORY/revision/$MODEL_REVISION?blobs=true"
           jq -e --arg revision "$MODEL_REVISION" '.sha == $revision' "$metadata"
           jq -e \
-            --arg license "$MODEL_LICENSE_ID" \
-            '.cardData.license == $license' \
-            "$metadata"
-          jq -e \
             --arg filename "$MODEL_FILENAME" \
             --arg sha256 "$MODEL_SHA256" \
             --argjson size "$MODEL_SIZE_BYTES" \
@@ -270,6 +266,25 @@ jobs:
               select(.rfilename == $filename) |
               .size == $size and .lfs.size == $size and .lfs.sha256 == $sha256' \
             "$metadata"
+
+      - name: Verify immutable license evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          license_source="$RUNNER_TEMP/model-license-evidence"
+          curl \
+            --fail \
+            --location \
+            --retry 3 \
+            --retry-all-errors \
+            --connect-timeout 30 \
+            --max-time 120 \
+            --output "$license_source" \
+            "$LICENSE_EVIDENCE_URL"
+          python scripts/quality_precheck.py verify-license \
+            --profile "$MODEL_PROFILE" \
+            --path "$license_source" \
+            > "$EVIDENCE_DIR/license-provenance.json"
 
       - name: Enforce temporary-disk safety margin
         shell: bash
@@ -350,6 +365,11 @@ jobs:
             --arg filename "$MODEL_FILENAME" \
             --arg quantization "$MODEL_QUANTIZATION" \
             --arg license "$MODEL_LICENSE" \
+            --arg license_id "$MODEL_LICENSE_ID" \
+            --arg license_repository "$LICENSE_REPOSITORY" \
+            --arg license_revision "$LICENSE_REVISION" \
+            --arg license_path "$LICENSE_PATH" \
+            --arg license_evidence_sha256 "$LICENSE_EVIDENCE_SHA256" \
             --arg parameter_class "$MODEL_PARAMETER_CLASS" \
             --arg sha256 "$MODEL_SHA256" \
             --argjson thinking_markers_present "$thinking_markers_present" \
@@ -361,6 +381,12 @@ jobs:
               filename: $filename,
               quantization: $quantization,
               license: $license,
+              license_id: $license_id,
+              license_repository: $license_repository,
+              license_revision: $license_revision,
+              license_path: $license_path,
+              license_evidence_sha256: $license_evidence_sha256,
+              license_verified: true,
               parameter_class: $parameter_class,
               size_bytes: $size_bytes,
               sha256: $sha256,
@@ -581,6 +607,7 @@ jobs:
             "$RUNNER_TEMP/aarchtune-baseline.stdout" \
             "$RUNNER_TEMP/aarchtune-baseline.stderr" \
             "$RUNNER_TEMP/model-metadata.json" \
+            "$RUNNER_TEMP/model-license-evidence" \
             "$RUNNER_TEMP/model-verification.json" \
             "$RUNNER_TEMP/model-probe-classification.json"
           find "$BASELINE_DIR" -type f -name 'server.log' -delete 2>/dev/null || true
@@ -590,6 +617,7 @@ jobs:
           [[ ! -d "$BASELINE_DIR" ]]
           [[ ! -e "$MODEL_PATH" ]]
           [[ ! -d "$MODEL_CACHE_DIR" ]]
+          [[ ! -e "$RUNNER_TEMP/model-license-evidence" ]]
           {
             echo "tracked_process_groups_stopped=$cleanup_ok"
             echo "samplers_stopped=$cleanup_ok"
@@ -598,6 +626,7 @@ jobs:
             echo "response_evidence_deleted=true"
             echo "probe_output_deleted=true"
             echo "temporary_server_logs_deleted=true"
+            echo "license_evidence_source_deleted=true"
             echo "cleanup_complete=$cleanup_ok"
           } > "$EVIDENCE_DIR/cleanup-proof.txt"
           [[ "$cleanup_ok" == true ]]
@@ -637,6 +666,12 @@ jobs:
             echo "model_size_bytes=$MODEL_SIZE_BYTES"
             echo "model_sha256=$MODEL_SHA256"
             echo "model_license=$MODEL_LICENSE"
+            echo "license_id=$MODEL_LICENSE_ID"
+            echo "license_repository=$LICENSE_REPOSITORY"
+            echo "license_revision=$LICENSE_REVISION"
+            echo "license_path=$LICENSE_PATH"
+            echo "license_evidence_sha256=$LICENSE_EVIDENCE_SHA256"
+            echo "license_verified=true"
             echo "kleidiai_build_enabled=true"
             echo "kleidiai_runtime_evidence=${KLEIDIAI_RUNTIME_STATUS:-unknown}"
             echo "configured_attempts=10"
