@@ -1,5 +1,9 @@
 # AArchTune
 
+**Arm Create 2026 · Cloud AI Track**
+
+[![CI](https://github.com/Sombra-1/arm-agent-optimizer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Sombra-1/arm-agent-optimizer/actions/workflows/ci.yml)
+
 **Quality-gated GGUF optimization for native Arm64.**
 
 Arm64-native · GGUF/llama.cpp · workload-aware quality gates · reproducible
@@ -53,8 +57,13 @@ parallel requests are always beneficial.
 Real optimization requires Linux AArch64. Synthetic and non-Arm modes require
 explicit development opt-ins and cannot produce Arm performance claims.
 
-KleidiAI build integration was enabled and verified at build time in the native
-validation workflow. KleidiAI runtime activation remains unknown.
+KleidiAI was compiled into the pinned llama.cpp build. During the
+Qwen2.5-1.5B Q4_K_M native smoke, llama.cpp reported that q4_K tensors had no
+KleidiAI kernel and were not accelerated; the available kernels were reported
+for Q4_0 and Q8_0. No end-to-end KleidiAI runtime speedup is claimed for this
+tested model. Build integration was verified, tested Q4_K runtime acceleration
+was not present, and no general claim is made about other tensor formats or
+hardware.
 
 ## Architecture
 
@@ -145,6 +154,20 @@ completed the real pipeline:
 All candidates failed the unchanged quality policy. AArchTune therefore
 published no speedup or deployment recommendation.
 
+### Permanent native evidence
+
+The reviewed Actions artifact had temporary retention, so its original ZIP
+bytes are preserved in the repository with the original SHA-256:
+
+- [evidence record and verification instructions](docs/evidence/README.md);
+- [original artifact ZIP](docs/evidence/aarchtune-real-arm64-smoke-30119492016-1.zip);
+  and
+- [SHA-256 checksum](docs/evidence/aarchtune-real-arm64-smoke-30119492016-1.sha256).
+
+Verify the checksum before trusting or extracting the ZIP. Preservation keeps
+the existing sanitized evidence available; it does not create a new benchmark
+claim or repeatability proof.
+
 ### Baseline-only model quality evidence
 
 | Model and contract | Request | Task | JSON | Validators | Policy |
@@ -207,7 +230,8 @@ See [security](docs/security.md), [runtime safety](docs/runtime-safety.md), and
 - The completed native optimization is one smoke run, not repeatability proof.
 - Tested Qwen models did not satisfy the workload quality policy.
 - Mistral quality could not be measured because the hosted runner was lost.
-- KleidiAI build integration is proven; runtime activation remains unknown.
+- KleidiAI build integration is proven; the tested Q4_K tensors had no
+  KleidiAI kernel, and no end-to-end runtime speedup is claimed.
 - No candidate is claimed as production-optimal.
 - Sequential service rate is not concurrent-client throughput.
 - Broader Arm hardware and workload validation remains future work.
@@ -297,7 +321,7 @@ labelled and are product-behavior evidence, never native performance evidence.
 ## Submission status
 
 Experimental work is frozen. No full-performance recommendation or unsupported
-speedup claim is published. The remaining work is documentation, video
+speedup claim is published. The remaining work is screenshot review, video
 recording, link verification, and Devpost submission.
 
 - [Final validation report](docs/FINAL_VALIDATION_REPORT.md)

@@ -30,8 +30,8 @@ ranking from promoting malformed or semantically wrong responses.
 | llama.cpp commit | `1425386fd996511e1f3295e7366c38289a92a271` |
 | GPU layers | `n_gpu_layers=0` |
 | Memory mapping | enabled |
-| KleidiAI | build integration enabled and verified at build time |
-| KleidiAI runtime | unknown |
+| KleidiAI | compiled into the pinned llama.cpp build |
+| KleidiAI runtime | q4_K tensors reported no available KleidiAI kernel; Q4_0 and Q8_0 kernels were reported available |
 | Workload | five deterministic tasks, two measured repetitions per task |
 | Quality policy | unchanged `configs/default-quality-policy.yaml` |
 
@@ -57,9 +57,10 @@ The final repository validation establishes:
 - deployment bundle and Optimization Passport validation; and
 - explicit separation of synthetic behavior tests from native evidence.
 
-Normal CI run
-[30202291140](https://github.com/Sombra-1/arm-agent-optimizer/actions/runs/30202291140)
-passed on its first attempt for Python 3.11 and 3.12.
+The live main-branch CI workflow is available at
+<https://github.com/Sombra-1/arm-agent-optimizer/actions/workflows/ci.yml>.
+Historical run IDs in this report are labelled as historical evidence rather
+than presented as the current CI state.
 
 ## Native evidence table
 
@@ -75,6 +76,29 @@ passed on its first attempt for Python 3.11 and 3.12.
 Synthetic fixtures separately validate selection, rejection, reporting, and
 artifact behavior. Their generated measurements are not Arm or model-performance
 evidence and are excluded from the native table.
+
+## Permanent native artifact
+
+The reviewed native smoke archive is permanently preserved because the
+original Actions artifact had temporary retention:
+
+| Field | Value |
+| --- | --- |
+| Original workflow run | [`30119492016`](https://github.com/Sombra-1/arm-agent-optimizer/actions/runs/30119492016) |
+| Original artifact ID | `8607905782` |
+| Original run commit | `8376178cc37d00d64fccc2d0276161e0c8f7fd23` |
+| Original creation time | `2026-07-24T20:00:38Z` |
+| Original expiration time | `2026-08-07T20:00:36Z` |
+| Original archive SHA-256 | `2cc03947eb624ee03ea5268c5a9fb2003eecd57ffd0ed50d7807ffaca4f326ee` |
+| Permanent archive | [`docs/evidence/aarchtune-real-arm64-smoke-30119492016-1.zip`](evidence/aarchtune-real-arm64-smoke-30119492016-1.zip) |
+| Privacy result | `forbidden_content_matches=0` |
+| Cleanup result | `cleanup_complete=true` |
+
+Verification instructions and the checksum file are in
+[`docs/evidence/README.md`](evidence/README.md). Verify the SHA-256 and ZIP
+integrity before extraction, and extract only outside the repository. Committing
+the original archive preserves the reviewed evidence; it does not provide
+additional runs or repeatability proof.
 
 ## Full native optimization smoke
 
@@ -144,9 +168,18 @@ initiating shutdown cause remains unproven.
 
 ## KleidiAI statement
 
-KleidiAI build integration was enabled and verified at build time. Existing
-evidence does not conclusively verify runtime acceleration, so runtime status is
-reported as unknown.
+KleidiAI was compiled into the pinned llama.cpp build. During the
+Qwen2.5-1.5B Q4_K_M native smoke, the captured runtime evidence stated:
+
+```text
+kleidiai: no kernel for tensor type q4_K, not accelerated by KleidiAI
+(kernels available for Q4_0 and Q8_0)
+```
+
+Build integration was therefore proven, while the tested Q4_K_M workload did
+not receive KleidiAI kernel acceleration. No KleidiAI speedup is claimed. This
+finding is specific to the recorded model tensor type and pinned runtime; it is
+not a general conclusion about other tensor formats or hardware.
 
 ## Evidence and privacy
 
@@ -170,7 +203,8 @@ model behavior.
 - JSON-object mode did not change the tested Qwen aggregate result.
 - Mistral quality remains unknown because the hosted runner was lost before
   baseline inference.
-- KleidiAI build integration is proven; runtime activation is unknown.
+- KleidiAI build integration is proven; the tested Q4_K_M workload reported no
+  available KleidiAI kernel, and no runtime speedup is claimed.
 - No full-performance recommendation is published.
 - No unsupported speedup claim is made.
 - Model-family experimentation is frozen.

@@ -31,7 +31,9 @@ These boundaries define what the validated evidence supports.
 - V1 supports Linux CPU inference through `llama.cpp`; it does not tune GPUs,
   training, distributed inference, or concurrent multi-client load.
 - Client-side time-to-first-token is unavailable in non-streaming V1.
-- KleidiAI build integration is proven; runtime activation remains unknown.
+- KleidiAI build integration is proven. For the recorded Q4_K_M smoke, llama.cpp
+  reported no q4_K KleidiAI kernel and no acceleration; this does not establish
+  behavior for other tensor formats or hardware.
 - Practical improvement thresholds are noise guardrails, not formal
   statistical significance tests.
 - No candidate is claimed as production-optimal or transferable to another

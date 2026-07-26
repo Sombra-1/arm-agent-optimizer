@@ -61,8 +61,12 @@ Neoverse-N2 cores and CPU-only llama.cpp. The workflow pinned llama.cpp release
 `b10106` to immutable commit
 `1425386fd996511e1f3295e7366c38289a92a271`.
 
-KleidiAI build integration was enabled and verified at build time. Runtime
-activation remains unknown, so no runtime acceleration claim is made.
+KleidiAI was compiled into the pinned llama.cpp build. During the
+Qwen2.5-1.5B Q4_K_M native smoke, llama.cpp reported that q4_K tensors had no
+KleidiAI kernel and were not accelerated; available kernels were reported for
+Q4_0 and Q8_0. No end-to-end KleidiAI runtime speedup is claimed for this tested
+model, and no general conclusion is made about other tensor formats or
+hardware.
 
 ## Quality and reliability
 
@@ -155,7 +159,8 @@ conclusion.
 - Tested Qwen configurations did not satisfy the workload quality policy.
 - Mistral quality was not measured because the hosted runner was lost before
   baseline inference.
-- KleidiAI build integration is proven; runtime activation is unknown.
+- KleidiAI build integration is proven; the tested Q4_K tensors had no
+  KleidiAI kernel, and no end-to-end runtime speedup is claimed.
 - Sequential service rate is not concurrent-client throughput.
 - No candidate is claimed as production-optimal.
 - No performance speedup is claimed.
@@ -188,6 +193,11 @@ current runs.
 
 - Repository: https://github.com/Sombra-1/arm-agent-optimizer
 - License: MIT
-- [Final validation report](FINAL_VALIDATION_REPORT.md)
-- [Demo script](DEMO_SCRIPT.md)
-- [Submission checklist](SUBMISSION_CHECKLIST.md)
+- Final validation report:
+  https://github.com/Sombra-1/arm-agent-optimizer/blob/main/docs/FINAL_VALIDATION_REPORT.md
+- Demo script:
+  https://github.com/Sombra-1/arm-agent-optimizer/blob/main/docs/DEMO_SCRIPT.md
+- Submission checklist:
+  https://github.com/Sombra-1/arm-agent-optimizer/blob/main/docs/SUBMISSION_CHECKLIST.md
+- Permanent native evidence:
+  https://github.com/Sombra-1/arm-agent-optimizer/blob/main/docs/evidence/README.md

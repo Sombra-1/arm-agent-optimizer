@@ -14,6 +14,8 @@ live in [SUBMISSION_CHECKLIST.md](SUBMISSION_CHECKLIST.md).
 - [x] Synthetic evidence is visibly labelled.
 - [x] Native and synthetic evidence are explicitly separated.
 - [x] Native run IDs and limitations are documented.
+- [x] The original sanitized native archive is permanently preserved with its
+      SHA-256 and verification instructions.
 - [x] Devpost text contains no real-result placeholders.
 - [x] No unsupported speedup claim is published.
 - [x] `scripts/validate-release.sh` passes.
@@ -23,7 +25,7 @@ live in [SUBMISSION_CHECKLIST.md](SUBMISSION_CHECKLIST.md).
 - [ ] Render the README Mermaid diagram on GitHub.
 - [ ] Test installation commands in a fresh environment.
 - [ ] Record and review the final video.
-- [ ] Refresh screenshots where the visible CI commit is outdated.
+- [ ] Refresh the three repository-facing screenshots.
 - [ ] Verify repository visibility and all public links.
 - [ ] Preview and submit the final Devpost entry.
 - [ ] Save the final submission URL and confirmation.

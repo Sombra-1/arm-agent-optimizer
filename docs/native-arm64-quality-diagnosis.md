@@ -15,9 +15,11 @@ chat-template option was sent. That absence made the workload a test of the mode
 instruction-following and structured-output ability. It is a relevant configuration
 characteristic, but the evidence does not prove a malformed request or template defect.
 
-The smallest justified next experiment is one model-only substitution to a more capable
-instruction model, retaining the same workload, quality policy, screening settings, llama.cpp
-pin, benchmark repetitions, and candidate count.
+At the time of this diagnosis, the smallest justified follow-up was a
+model-only substitution to a more capable instruction model while retaining
+the workload, quality policy, screening settings, llama.cpp pin, benchmark
+repetitions, and candidate count. Those follow-ups were subsequently completed,
+and model-family experimentation is now frozen.
 
 No quality threshold was weakened, and this diagnosis changes no product behavior or policy.
 

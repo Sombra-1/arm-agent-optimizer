@@ -38,7 +38,13 @@ Every synthetic performance screenshot visibly includes `SYNTHETIC TEST EVIDENCE
 
 ## Regeneration requirement
 
-The repository now has separately documented native Arm64 evidence. These
-screenshots remain synthetic product-behavior illustrations and must retain
-their visible synthetic labels. Native quantitative claims may be made only
-from a validated native Passport and bundle.
+The repository now permanently preserves the original reviewed native artifact
+and checksum in [`docs/evidence/`](../evidence/README.md), because the Actions
+copy had temporary retention. This preservation does not turn a single native
+smoke into repeatability proof.
+
+Screenshots 01–03 must be refreshed after the evidence-preservation commit and
+its normal CI pass. Screenshots 04–06 remain synthetic product-behavior
+illustrations and must retain their visible synthetic labels. Native
+quantitative claims may be made only from the validated native Passport and
+bundle.

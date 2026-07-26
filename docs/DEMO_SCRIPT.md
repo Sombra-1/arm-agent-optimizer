@@ -22,8 +22,7 @@ Prepare these tabs:
    `https://github.com/Sombra-1/arm-agent-optimizer/actions/runs/30119492016`.
 4. `docs/native-arm64-quality-diagnosis.md`.
 5. `docs/screenshots/05-fastest-candidate-rejected.png`.
-6. A previously downloaded sanitized native artifact, if it is still
-   available. Do not depend on artifact availability.
+6. `docs/evidence/README.md` and the permanently preserved native archive.
 
 Prepare a clean terminal at the repository root with the virtual environment
 installed. Clear scrollback containing tokens, private paths, or unrelated
@@ -85,8 +84,11 @@ Then show the native environment row in `docs/FINAL_VALIDATION_REPORT.md`:
 
 Use the exact wording:
 
-> KleidiAI build integration was enabled and verified at build time. Runtime
-> activation remains unknown.
+> KleidiAI was compiled into the pinned llama.cpp build. During the
+> Qwen2.5-1.5B Q4_K_M native smoke, llama.cpp reported that q4_K tensors had no
+> KleidiAI kernel and were not accelerated; the available kernels were reported
+> for Q4_0 and Q8_0. No end-to-end KleidiAI runtime speedup is claimed for this
+> tested model.
 
 ## 1:35–2:05 — Workload and quality policy
 
@@ -152,13 +154,27 @@ inventory:
 - cleanup proof; and
 - privacy-scan result.
 
-If a prepared artifact is available, use:
+Verify and list the permanent repository archive without extracting it in
+place:
 
 ```bash
-aarchtune optimize validate NATIVE_OPTIMIZATION_DIRECTORY --json
-aarchtune finalize validate NATIVE_OPTIMIZATION_DIRECTORY/final --json
+cd docs/evidence
+sha256sum -c aarchtune-real-arm64-smoke-30119492016-1.sha256
+unzip -l aarchtune-real-arm64-smoke-30119492016-1.zip | head -40
+```
+
+To show the report or validate the generated bundle, extract the verified ZIP
+into a disposable directory outside the repository. Do not extract into
+`docs/evidence/`, modify the generated files, or recommit them:
+
+```bash
+evidence_demo_dir=$(mktemp -d)
+unzip -q aarchtune-real-arm64-smoke-30119492016-1.zip \
+  -d "$evidence_demo_dir"
+aarchtune optimize validate "$evidence_demo_dir/optimization" --json
+aarchtune finalize validate "$evidence_demo_dir/optimization/final" --json
 aarchtune passport verify \
-  NATIVE_OPTIMIZATION_DIRECTORY/final/optimization-passport.json --json
+  "$evidence_demo_dir/optimization/final/optimization-passport.json" --json
 ```
 
 Do not substitute a synthetic directory while calling it native.

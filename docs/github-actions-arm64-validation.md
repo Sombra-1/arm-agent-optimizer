@@ -8,7 +8,10 @@ permissions, never commits or pushes, and has no automatic or scheduled trigger.
 
 The submission evidence window is now closed. Do not dispatch or rerun this
 workflow for the final submission. The completed native evidence is summarized
-in [the final validation report](FINAL_VALIDATION_REPORT.md).
+in [the final validation report](FINAL_VALIDATION_REPORT.md). The original
+reviewed smoke artifact is permanently preserved with its checksum in
+[the evidence directory](evidence/README.md) because its 14-day Actions
+retention was temporary.
 
 ## Modes
 
@@ -70,6 +73,8 @@ Smoke artifacts add model provenance (never weights), the workload hash and
 validation, the compact validated final bundle, the exact stage files referenced
 by its Passport, Pareto evidence, selected profile when present, validation
 outputs, cleanup state, and a concise metrics summary. Retention is 14 days.
+The artifact from run `30119492016` was preserved before expiration without
+recompression; this does not create another run or benchmark result.
 
 The reviewed upload directory excludes GGUF weights, model caches, raw model
 responses, raw attempt/response data, server logs, process samples, complete
@@ -107,9 +112,16 @@ optimization directories. Also inspect `passport-verification.json`,
 `privacy-scan.txt`.
 
 KleidiAI build support is proven from CMake configuration and compile evidence.
-Runtime status is `verified` only if the bounded model-loading probe emits
-recognized positive KleidiAI evidence. A missing log line is recorded as
-`unknown`, not as a positive or negative claim.
+For the Qwen2.5-1.5B Q4_K_M smoke, the retained runtime evidence reports:
+
+```text
+kleidiai: no kernel for tensor type q4_K, not accelerated by KleidiAI
+(kernels available for Q4_0 and Q8_0)
+```
+
+The tested Q4_K tensors therefore did not receive KleidiAI kernel acceleration.
+No end-to-end speedup is claimed, and this result is not generalized to other
+tensor formats or hardware.
 
 ## Interpretation limits
 
