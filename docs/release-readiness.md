@@ -8,7 +8,9 @@ live in [SUBMISSION_CHECKLIST.md](SUBMISSION_CHECKLIST.md).
 - [x] Full pytest suite passes with 90% aggregate coverage.
 - [x] Ruff check and format check pass.
 - [x] Strict MyPy passes.
-- [x] Python 3.11 and 3.12 CI pass.
+- [x] Python 3.11 and 3.12 passed on the evidence-preservation commit; the
+      [live main-branch CI workflow](https://github.com/Sombra-1/arm-agent-optimizer/actions/workflows/ci.yml)
+      remains the current status reference.
 - [x] MIT `LICENSE` exists and README links it.
 - [x] No GGUF model weights are committed.
 - [x] Synthetic evidence is visibly labelled.

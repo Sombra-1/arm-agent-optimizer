@@ -21,4 +21,7 @@ submission evidence.
 
 See [build-llama-arm64.sh](../scripts/build-llama-arm64.sh),
 [architecture](architecture.md), and the
-[final validation report](FINAL_VALIDATION_REPORT.md).
+[final validation report](FINAL_VALIDATION_REPORT.md). The reviewed native
+result is available through the
+[permanent evidence index](evidence/README.md); verify the archived ZIP before
+extracting it outside the repository.
