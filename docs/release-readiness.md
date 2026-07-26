@@ -1,17 +1,31 @@
-# Release readiness checklist
+# Release review status
 
-- [ ] Full pytest suite passes with reported coverage.
-- [ ] Ruff check and format check pass.
-- [ ] Strict MyPy passes.
-- [ ] MIT `LICENSE` exists and README links it.
-- [ ] Secret scan reviewed; no credentials or personal data.
-- [ ] No GGUF model weights except the explicit tiny fake text fixture.
-- [ ] Synthetic evidence is visibly labelled in CLI, report, Passport, and README.
-- [ ] Real Arm evidence follows the runbook and replaces no placeholder without validation.
-- [ ] Documentation links and CLI examples reviewed.
-- [ ] Public repository metadata and contribution/security files reviewed.
-- [ ] Devpost fields completed without fabricated results.
-- [ ] Optional video uses real or clearly labelled synthetic evidence.
-- [ ] `optimize validate`, `finalize validate`, and `passport verify` pass.
-- [ ] Cleanup audit finds no fake or real owned processes.
-- [ ] `scripts/validate-release.sh` passes.
+This document tracks repository-level release review. Manual submission actions
+live in [SUBMISSION_CHECKLIST.md](SUBMISSION_CHECKLIST.md).
+
+## Completed validation
+
+- [x] Full pytest suite passes with 90% aggregate coverage.
+- [x] Ruff check and format check pass.
+- [x] Strict MyPy passes.
+- [x] Python 3.11 and 3.12 CI pass.
+- [x] MIT `LICENSE` exists and README links it.
+- [x] No GGUF model weights are committed.
+- [x] Synthetic evidence is visibly labelled.
+- [x] Native and synthetic evidence are explicitly separated.
+- [x] Native run IDs and limitations are documented.
+- [x] Devpost text contains no real-result placeholders.
+- [x] No unsupported speedup claim is published.
+- [x] `scripts/validate-release.sh` passes.
+
+## Manual review before submission
+
+- [ ] Render the README Mermaid diagram on GitHub.
+- [ ] Test installation commands in a fresh environment.
+- [ ] Record and review the final video.
+- [ ] Refresh screenshots where the visible CI commit is outdated.
+- [ ] Verify repository visibility and all public links.
+- [ ] Preview and submit the final Devpost entry.
+- [ ] Save the final submission URL and confirmation.
+
+No tag move or GitHub release is part of this documentation task.

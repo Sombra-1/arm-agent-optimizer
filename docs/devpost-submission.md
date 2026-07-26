@@ -1,68 +1,193 @@
-# Devpost submission draft
+# AArchTune — Quality-Gated GGUF Optimization for Native Arm64
 
-## Challenge track
+**Challenge track:** Cloud AI
 
-**Cloud AI**
+**One-line description:** AArchTune searches native Arm64 inference
+configurations and recommends a result only when performance, correctness,
+provenance, and repeatability all pass.
 
-AArchTune improves AI inference on Arm-powered cloud and server systems by finding a fast, memory-aware, and quality-preserving `llama.cpp` runtime configuration for a representative application workload.
+## Inspiration
 
-## Project overview
+Most inference optimizers ask which configuration is fastest. That is not
+enough for an agent or structured-output workload: a faster server can still
+return malformed JSON, choose the wrong action, time out, or violate a safety
+constraint.
 
-AArchTune is a local, open-source autotuner that selects a fast `llama.cpp` CPU configuration without accepting measured regressions in a representative AI workload.
+AArchTune began with a stricter question:
 
-## Purpose and problem
+> Which configuration is faster, correct, reproducible, and safe to deploy?
 
-Arm servers expose different core, memory, NUMA, and instruction characteristics. A low-level tokens-per-second result does not prove an agent still returns valid schemas or safe actions. AArchTune connects systems tuning to application correctness.
+## What it does
 
-## Functionality
+AArchTune is an open-source, local-first optimizer for GGUF inference with
+`llama.cpp` on Linux Arm64. It:
 
-The pipeline detects hardware, records a fixed baseline, plans a bounded search, screens equivalent low-level signatures, evaluates advanced profiles through isolated `llama-server` processes, applies absolute and baseline-relative quality gates, checks drift, selects or retains a profile, and produces a Passport, report, and safe deployment bundle.
+- detects hardware, topology, memory, and runtime capabilities;
+- measures a fixed real-workload baseline;
+- creates a deterministic bounded candidate plan;
+- screens duplicate low-level signatures;
+- evaluates advanced profiles against the real workload;
+- applies absolute and baseline-relative quality gates;
+- validates temporal drift;
+- selects an eligible candidate or records why no candidate is safe; and
+- creates a verifiable Optimization Passport, report, and deployment bundle.
 
-## Output
+It tunes runtime configuration. It does not train or modify the model.
 
-The final artifacts include a self-contained report, verifiable Optimization Passport, Pareto evidence, selected YAML, safe run/reproduction scripts, and SHA-256 checksums.
+## How it works
 
-## Arm-specific value
+The pipeline is:
 
-AArchTune uses Arm feature evidence, core topology, NUMA, memory headroom, and conservative KleidiAI detection. Results remain explicitly hardware-specific.
+```text
+hardware detection → runtime discovery → baseline → candidate plan
+→ screening → native measurement → workload validators → eligibility gate
+→ drift validation → selection or baseline retention → Passport
+```
 
-## Developer experience
+Performance ranking happens only after evidence completeness and workload
+quality pass. Failed candidates keep diagnostic evidence but cannot enter final
+ranking.
 
-One command runs the pipeline; native stage commands remain available for debugging. Resume reuses only validated evidence.
+## How Arm technology is used
 
-## Setup and validation
+Real optimization requires native Linux AArch64. AArchTune records Arm CPU
+features, physical/logical core topology, NUMA layout, available memory, and
+runtime-supported flags. Candidate generation uses those facts rather than
+assuming that maximum threads, larger batches, mmap changes, caching, or
+parallel requests are always beneficial.
 
-See `README.md` and `docs/real-arm-validation-runbook.md`. Tests use small synthetic fixtures without models or Arm claims.
+Native validation ran on GitHub-hosted `ubuntu-24.04-arm` with four Arm
+Neoverse-N2 cores and CPU-only llama.cpp. The workflow pinned llama.cpp release
+`b10106` to immutable commit
+`1425386fd996511e1f3295e7366c38289a92a271`.
 
-## Challenge-period confirmation
+KleidiAI build integration was enabled and verified at build time. Runtime
+activation remains unknown, so no runtime acceleration claim is made.
 
-AArchTune was created and substantially implemented during the Arm AI Optimization Challenge period. The initial validated public MVP was published on July 22, 2026. The public Git history records the implementation and the narrowly scoped release-validation fixes completed before submission.
+## Quality and reliability
 
-## Suggested submission screenshots
+The default policy requires at least:
 
-1. `docs/screenshots/01-project-overview-cloud-ai.png` — project overview and Cloud AI track.
-2. `docs/screenshots/03-ci-passing.png` — public CI validation.
-3. `docs/screenshots/05-fastest-candidate-rejected.png` — synthetic demonstration of quality-constrained rejection.
-4. `docs/screenshots/06-synthetic-funnel-pareto.png` — synthetic candidate funnel and Pareto evidence.
+- 0.98 request success;
+- 0.95 task success;
+- 0.98 JSON validity;
+- 0.97 validator pass rate; and
+- 0.98 completed evidence.
 
-The performance screenshots are synthetic behavioral demonstrations and must be replaced or supplemented with validated real Arm64 screenshots before making quantitative Arm-performance claims.
+It also limits timeouts, baseline-relative regression, critical-validator
+failures, and start/end baseline drift. A fast configuration that fails these
+checks is ineligible.
 
-## Real results
+The strongest native result demonstrates this safety behavior. AArchTune
+completed all 132 configured candidate executions, deduplicated them into 11
+signatures, advanced four profiles to real-workload evaluation, and returned
+`no_eligible_candidate` because every evaluated profile failed the unchanged
+quality policy.
 
-- Service-rate improvement: **[INSERT REAL ARM64 RESULT]**
-- P95 latency improvement: **[INSERT REAL ARM64 RESULT]**
-- Peak RSS change: **[INSERT REAL ARM64 RESULT]**
-- Quality preservation: **[INSERT REAL ARM64 RESULT]**
-- Arm machine and model: **[INSERT REAL ARM64 RESULT]**
+That is not a successful performance optimization. It is a successful refusal
+to deploy a faster-but-incorrect configuration.
 
-## Why it should win
+## Technical architecture
 
-AArchTune makes the quality/performance tradeoff inspectable: the headline can be a faster candidate rejected because correctness regressed. It packages that decision as reproducible evidence rather than an unexplained score.
+AArchTune uses typed Pydantic artifacts, deterministic stage boundaries,
+SHA-256 provenance, isolated process groups, bounded output/timeouts, loopback
+server binding, declarative validators, and resumable orchestration that trusts
+only revalidated completed stages.
+
+The final bundle includes:
+
+- a canonical Optimization Passport;
+- stage and bundle hashes;
+- quality decisions and rejection reasons;
+- drift evidence;
+- a self-contained report with no network dependencies;
+- a selected configuration only when eligible; and
+- safe reproduction/deployment files or an explicit unavailable result.
+
+Raw responses, server logs, model weights, caches, environment dumps, and
+credentials are excluded from reviewed public evidence.
+
+## Challenges
+
+The main challenge was separating three kinds of truth:
+
+1. low-level performance evidence;
+2. application-quality evidence; and
+3. evidence completeness and provenance.
+
+The native smoke completed but found no quality-eligible candidate. Later Qwen
+quality prechecks improved aggregate quality over the 1.5B model but still
+failed policy. Two final Mistral attempts lost the shared hosted runner during
+CPU loading before inference, so Mistral quality remains unknown. The project
+records that as incomplete evidence rather than inventing an OOM or quality
+conclusion.
+
+## Accomplishments
+
+- Completed a real 132-execution optimization workflow on native Arm64.
+- Correctly returned `no_eligible_candidate` under the unchanged quality policy.
+- Verified immutable runtime, model, source-model, license, workload, and policy
+  provenance.
+- Implemented baseline-relative quality gating, drift checks, deterministic
+  planning, safe process ownership, and candidate eligibility controls.
+- Built validated final bundles and canonical Optimization Passports.
+- Kept native evidence visibly separate from synthetic product-behavior tests.
+- Passed 514 automated tests with 90% aggregate coverage, strict MyPy, Ruff, and
+  Python 3.11/3.12 CI.
+
+## What we learned
+
+- Request success does not imply application correctness.
+- Scaling the tested Qwen model from 7B to 14B did not change this workload's
+  aggregate quality result.
+- Plain JSON-object mode did not change the tested Qwen 7B aggregate result.
+- `no_eligible_candidate` is an important production safety state, not an error
+  to hide.
+- Missing evidence must stay missing: hosted-runner shutdown does not prove
+  model failure, Arm incompatibility, or OOM.
+- Reproducibility requires hashes, provenance, stage validation, and drift
+  evidence—not just a benchmark screenshot.
 
 ## Limitations
 
-Linux CPU-only v1, sequential workload service rate, non-streaming TTFT unavailable, and no universal optimality claim.
+- Native results come from an ephemeral shared runner.
+- One full native optimization smoke is not repeatability proof.
+- Tested Qwen configurations did not satisfy the workload quality policy.
+- Mistral quality was not measured because the hosted runner was lost before
+  baseline inference.
+- KleidiAI build integration is proven; runtime activation is unknown.
+- Sequential service rate is not concurrent-client throughput.
+- No candidate is claimed as production-optimal.
+- No performance speedup is claimed.
 
-## License and repository
+## What is next
 
-MIT. Repository: https://github.com/Sombra-1/arm-agent-optimizer
+Experimental work is frozen for submission. The immediate next steps are video
+recording, screenshot/link review, and final Devpost publication.
+
+Future work after submission may add repeated measurements on dedicated Arm
+hardware, broader Arm server families, more representative workloads,
+concurrent-client testing, and stronger runtime-level acceleration evidence.
+Those would be new validation campaigns, not retroactive claims about the
+current runs.
+
+## Built with
+
+- Python 3.11/3.12
+- Typer
+- Pydantic
+- `llama.cpp`
+- GGUF models
+- Linux AArch64
+- GitHub-hosted Arm runners
+- KleidiAI build integration
+- pytest, Ruff, MyPy, JSON Schema, and Rich
+- GitHub Actions
+
+## Repository and evidence
+
+- Repository: https://github.com/Sombra-1/arm-agent-optimizer
+- License: MIT
+- [Final validation report](FINAL_VALIDATION_REPORT.md)
+- [Demo script](DEMO_SCRIPT.md)
+- [Submission checklist](SUBMISSION_CHECKLIST.md)

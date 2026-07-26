@@ -1,10 +1,14 @@
 # Native GitHub Actions Arm64 validation
 
-The `Native Arm64 Smoke Validation` workflow gives maintainers without physical
+The `Native Arm64 Smoke Validation` workflow gave maintainers without physical
 Arm hardware a bounded way to exercise AArchTune on a standard native
 GitHub-hosted Linux Arm64 runner. It is evidence collection, not deployment.
 The workflow is manual-only (`workflow_dispatch`), has read-only repository
 permissions, never commits or pushes, and has no automatic or scheduled trigger.
+
+The submission evidence window is now closed. Do not dispatch or rerun this
+workflow for the final submission. The completed native evidence is summarized
+in [the final validation report](FINAL_VALIDATION_REPORT.md).
 
 ## Modes
 
@@ -20,22 +24,9 @@ model, runs a short CPU loading probe, and runs AArchTune with two baseline
 repetitions, two evaluation repetitions, one warm-up request, and four advanced
 candidates. It does not enable synthetic or non-Arm development modes.
 
-Dispatch either mode from an authenticated GitHub CLI:
-
-```bash
-gh workflow run real-arm64-smoke.yml \
-  --repo Sombra-1/arm-agent-optimizer \
-  --ref main \
-  -f mode=preflight
-
-gh workflow run real-arm64-smoke.yml \
-  --repo Sombra-1/arm-agent-optimizer \
-  --ref main \
-  -f mode=smoke
-```
-
-Only one smoke run should be dispatched for a single validation task. The
-workflow concurrency group cancels an older run for the same ref.
+The historical dispatch interface supported `preflight` and `smoke` modes.
+Those inputs remain documented here for provenance, but no further run is part
+of the final submission plan.
 
 ## Pinned external inputs
 
@@ -127,7 +118,8 @@ dedicated production servers. Neighbors, page cache, thermal state, and runner
 allocation can affect measurements. Sequential requests per minute is not
 concurrent-client throughput.
 
-One successful smoke run is insufficient for a final performance claim. Before
-reporting a median, obtain at least three independent successful native runs
-with identical pinned inputs and verify every Passport and bundle. Report the
-median together with run-to-run spread and the recorded hardware limitations.
+The completed smoke is execution and safety evidence, not repeatability proof.
+It completed all 132 configured candidate executions and returned
+`no_eligible_candidate`; no performance recommendation or speedup is published.
+Broader hardware and repeatability studies are future work outside the frozen
+submission scope.

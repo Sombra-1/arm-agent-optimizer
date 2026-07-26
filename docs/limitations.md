@@ -1,7 +1,42 @@
-# Limitations
+# Limitations and evidence boundaries
 
-V1 supports Linux CPU inference through `llama.cpp` only. Real optimization targets AArch64. There is no streaming TTFT, concurrent multi-client load, distributed inference, GPU tuning, training, or automatic model acquisition.
+These boundaries define what the validated evidence supports.
 
-Sequential service rate is workload service capacity, not concurrency throughput. Memory sampling can miss short peaks. Deterministic order, page cache, thermal state, frequency scaling, and background load can bias results; the baseline-end sentinel provides partial protection only. Practical improvement thresholds are noise guardrails, not formal significance tests.
+## Native evidence scope
 
-Quality is limited to declared workload validators. Profiles must not be assumed optimal on another machine, binary, model, workload, or policy.
+- Native results come from an ephemeral shared GitHub-hosted runner, not a
+  dedicated benchmark host.
+- The completed full native optimization is one smoke run, not repeatability
+  proof.
+- Shared-runner page cache, neighboring work, frequency state, and thermal
+  conditions can affect measurements.
+- Sequential service rate measures workload service capacity, not
+  concurrent-client throughput.
+- Memory sampling is interval-based and can miss short peaks.
+
+## Model-quality scope
+
+- Tested Qwen configurations did not satisfy the unchanged workload quality
+  policy.
+- Qwen 7B, Qwen 14B, and JSON-object Qwen 7B produced identical aggregate
+  results on this workload; that is not a universal model ranking.
+- Mistral quality could not be measured because the hosted runner was lost
+  before baseline inference.
+- Mistral quality failure, Arm incompatibility, RAM exhaustion, and OOM remain
+  unproven.
+- Quality is limited to the declared workload validators.
+
+## Runtime and selection scope
+
+- V1 supports Linux CPU inference through `llama.cpp`; it does not tune GPUs,
+  training, distributed inference, or concurrent multi-client load.
+- Client-side time-to-first-token is unavailable in non-streaming V1.
+- KleidiAI build integration is proven; runtime activation remains unknown.
+- Practical improvement thresholds are noise guardrails, not formal
+  statistical significance tests.
+- No candidate is claimed as production-optimal or transferable to another
+  machine, runtime, model, workload, or policy.
+- Broader Arm hardware validation remains future work.
+
+Unavailable evidence is reported as unavailable. It is never plotted as zero or
+converted into a favorable or unfavorable claim.

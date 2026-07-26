@@ -38,9 +38,8 @@ No quality threshold was weakened, and this diagnosis changes no product behavio
 | Evaluation | 5 tasks × 2 repetitions; 1 warm-up; 4 advanced/evaluated profiles |
 | Evaluation result | completed; 4 quality rejections; no eligible candidate; exit code 4 |
 
-The requested local directory
-`/tmp/aarchtune-real-arm64-review-30119492016` was not present when this diagnosis began.
-The still-available sanitized artifact
+The requested temporary review directory was not present when this diagnosis
+began. The still-available sanitized artifact
 `aarchtune-real-arm64-smoke-30119492016-1` (artifact ID `8607905782`) was therefore inspected
 read-only through the GitHub Actions API. Inspected files were:
 
@@ -231,24 +230,22 @@ part of what this workload measured. Adding a grammar would be a different exper
 mask whether a stronger model can satisfy the existing workload contract, so it is not the
 smallest diagnostic next step.
 
-## 8. Single recommended next experiment
+## 8. Completed follow-up and experimental freeze
 
-Run one native Arm64 **baseline-quality precheck** with only the model changed to a materially
-more capable instruction-tuned GGUF known to fit the same runner. Do not run screening or
-optimization candidates during this precheck. Retain:
+The recommended model-capability prechecks were subsequently completed with the
+same workload, quality policy, llama.cpp pin, generation settings, and baseline
+shape:
 
-- the same workload;
-- the same quality policy and thresholds;
-- the same screening settings;
-- the same llama.cpp pin;
-- the same benchmark repetitions;
-- the same candidate count; and
-- the same request client and chat-template auto-detection path.
+- Qwen2.5-7B Q3_K_M, prompt-only;
+- Qwen2.5-14B Q3_K_M, prompt-only; and
+- Qwen2.5-7B Q3_K_M, JSON-object.
 
-This experiment isolates model capacity. If JSON validity and semantic validators improve while
-the request path is unchanged, it confirms the diagnosis. If they do not, the next investigation
-should preserve and privately review `raw-attempts.jsonl`, `server-command.json`, and `server.log`
-before considering any runtime-format change.
+All three produced identical aggregate results and remained below the unchanged
+quality thresholds. Two final Mistral Nemo 12B Q4_K_M attempts lost the hosted
+runner before baseline inference, leaving quality evidence incomplete.
+
+Model-family experimentation is now frozen. See
+`docs/FINAL_VALIDATION_REPORT.md` for the final evidence table and limitations.
 
 ## 9. Policy integrity
 

@@ -1,4 +1,8 @@
-# First real Arm64 validation runbook
+# Future dedicated Arm64 validation runbook
+
+The submission evidence campaign is complete and model-family experimentation
+is frozen. This runbook is retained for future post-submission validation on
+authorized hardware; it is not a submission task list.
 
 1. Use Linux AArch64 with Python 3.11+, local storage, and CPU inference.
 2. Prefer enough RAM for the chosen GGUF plus context, parallel slots, and system headroom.
@@ -18,5 +22,5 @@
 16. Open `final/report.html` locally and inspect quality rejection, Pareto evidence, provenance, and unavailable metrics.
 17. Optionally record Arm Performix or Streamline evidence separately; do not merge unsupported counters into AArchTune metrics.
 18. Sanitize raw responses, paths, logs, and machine identifiers before publication.
-19. Replace every `[INSERT REAL ARM64 RESULT]` placeholder only with validated run evidence; remove no synthetic warnings from synthetic artifacts.
+19. Publish a metric only when its validated Passport and evidence bundle support it; remove no synthetic warnings from synthetic artifacts.
 20. Stop servers, verify no owned processes remain, retain hashes, and archive only reviewed artifacts.
