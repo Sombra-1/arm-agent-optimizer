@@ -9,9 +9,11 @@ beneficial.
 Real optimization requires Linux AArch64. x86 and synthetic execution require
 explicit development opt-in and cannot produce Arm claims.
 
-KleidiAI build integration was enabled and verified at build time in the native
-workflow. Runtime activation remains unknown; AArchTune does not infer it from
-Arm architecture alone.
+KleidiAI was compiled into the pinned native llama.cpp build. For the recorded
+Qwen2.5-1.5B Q4_K_M smoke, llama.cpp reported no q4_K KleidiAI kernel and no
+acceleration; available kernels were reported for Q4_0 and Q8_0. No end-to-end
+KleidiAI speedup is claimed, and this model-specific result is not generalized
+to other tensor formats or hardware.
 
 Experimental model-family work is frozen for submission. The build helper and
 runbook remain implementation documentation, not instructions to generate new

@@ -321,8 +321,8 @@ labelled and are product-behavior evidence, never native performance evidence.
 ## Submission status
 
 Experimental work is frozen. No full-performance recommendation or unsupported
-speedup claim is published. The remaining work is screenshot review, video
-recording, link verification, and Devpost submission.
+speedup claim is published. The remaining work is video recording, final link
+verification, and Devpost submission.
 
 - [Final validation report](docs/FINAL_VALIDATION_REPORT.md)
 - [Devpost submission text](docs/devpost-submission.md)

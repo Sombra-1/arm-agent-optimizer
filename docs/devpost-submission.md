@@ -168,7 +168,7 @@ conclusion.
 ## What is next
 
 Experimental work is frozen for submission. The immediate next steps are video
-recording, screenshot/link review, and final Devpost publication.
+recording, final public-link review, and Devpost publication.
 
 Future work after submission may add repeated measurements on dedicated Arm
 hardware, broader Arm server families, more representative workloads,

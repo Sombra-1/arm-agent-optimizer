@@ -25,7 +25,7 @@ live in [SUBMISSION_CHECKLIST.md](SUBMISSION_CHECKLIST.md).
 - [ ] Render the README Mermaid diagram on GitHub.
 - [ ] Test installation commands in a fresh environment.
 - [ ] Record and review the final video.
-- [ ] Refresh the three repository-facing screenshots.
+- [x] Refresh the three repository-facing screenshots.
 - [ ] Verify repository visibility and all public links.
 - [ ] Preview and submit the final Devpost entry.
 - [ ] Save the final submission URL and confirmation.
