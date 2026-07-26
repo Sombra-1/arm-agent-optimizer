@@ -481,66 +481,95 @@ jobs:
 
       - name: Probe model loading on CPU
         if: env.PRECHECK_BLOCKED == 'false'
+        id: model_probe
+        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
-          probe_stdout="$RUNNER_TEMP/llama-cli-probe.stdout"
-          probe_stderr="$RUNNER_TEMP/llama-cli-probe.stderr"
-          setsid timeout --signal=TERM --kill-after=15s 600s \
-            "$LLAMA_BUILD_DIR/bin/llama-cli" \
+          python scripts/model_probe.py \
+            --binary "$LLAMA_BUILD_DIR/bin/llama-cli" \
             --model "$MODEL_PATH" \
+            --runner-temp "$RUNNER_TEMP" \
+            --result "$EVIDENCE_DIR/model-probe-result.json" \
+            --resource-evidence \
+              "$EVIDENCE_DIR/runner/probe-resource-evidence.jsonl" \
+            --timeout-seconds 600 \
+            --grace-seconds 15 \
+            --sample-interval-seconds 1 \
+            -- \
             --prompt 'Return only the word OK.' \
             --single-turn \
             --simple-io \
             --n-predict 8 \
             --seed 42 \
             --temp 0 \
-            --n-gpu-layers 0 \
-            > "$probe_stdout" 2> "$probe_stderr" &
-          probe_pid=$!
-          echo "$probe_pid" > "$RUNNER_TEMP/aarchtune-probe.pgid"
-          set +e
-          wait "$probe_pid"
-          probe_exit=$?
-          set -e
-          echo "ram_available_before_probe_bytes=$(free -b | awk '/^Mem:/ {print $7}')" \
-            >> "$EVIDENCE_DIR/runner/resource-evidence.txt"
-          sed \
-            -e "s#${RUNNER_TEMP}#\\$RUNNER_TEMP#g" \
-            -e "s#${GITHUB_WORKSPACE}#\\$GITHUB_WORKSPACE#g" \
-            "$probe_stderr" |
-            grep -Ei \
-              'CPU_KLEIDIAI|KleidiAI|load_backend|system_info|llama_model_loader|load_tensors|llama_context|load time|prompt eval|eval time' |
-            head -200 > "$EVIDENCE_DIR/llama-build/runtime-provenance.txt" || true
-          kleidiai_status=unknown
-          if grep -Eiq \
-            'CPU_KLEIDIAI|KleidiAI[^[:alnum:]]*(backend|enabled|active|loaded|in use|available)[^[:alnum:]]*(true|yes|on|1)?' \
-            "$probe_stderr"; then
-            kleidiai_status=verified
+            --n-gpu-layers 0
+
+      - name: Interpret model probe evidence
+        if: ${{ always() && env.PRECHECK_BLOCKED == 'false' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          probe_result="$EVIDENCE_DIR/model-probe-result.json"
+          if [[ ! -s "$probe_result" ]] ||
+            ! jq -e '
+              .schema_version == 1 and
+              (.classification | type == "string") and
+              (.outcome | type == "string") and
+              .generated_output_published == false and
+              .command_arguments_published == false
+            ' "$probe_result" > /dev/null; then
+            jq -n \
+              '{
+                schema_version: 1,
+                classification: "quality_evidence_incomplete",
+                outcome: "quality_evidence_incomplete",
+                evidence_complete: false,
+                child_return_code: null,
+                child_terminating_signal: null,
+                supervisor_signal: null,
+                oom_counter_delta: null,
+                oom_evidence: null,
+                generated_output_published: false,
+                command_arguments_published: false
+              }' > "$probe_result"
           fi
-          probe_result="$RUNNER_TEMP/model-probe-classification.json"
-          python scripts/quality_precheck.py classify-probe \
-            --exit-code "$probe_exit" \
-            --stderr "$probe_stderr" > "$probe_result"
           load_classification=$(jq -r '.classification' "$probe_result")
           precheck_outcome=$(jq -r '.outcome' "$probe_result")
+          case "$load_classification" in
+            model_loaded|probe_timeout|resource_incompatible|model_probe_failed|probe_terminated_by_signal|quality_evidence_incomplete) ;;
+            *)
+              load_classification=quality_evidence_incomplete
+              precheck_outcome=quality_evidence_incomplete
+              ;;
+          esac
+          case "$precheck_outcome" in
+            quality_evidence_incomplete|resource_incompatible) ;;
+            *) precheck_outcome=quality_evidence_incomplete ;;
+          esac
           case "$load_classification" in
             model_loaded) probe_status=probe_passed ;;
             probe_timeout) probe_status=probe_timeout ;;
             resource_incompatible) probe_status=resource_incompatible ;;
+            probe_terminated_by_signal) probe_status=probe_terminated_by_signal ;;
+            quality_evidence_incomplete) probe_status=quality_evidence_incomplete ;;
             *) probe_status=process_failure ;;
           esac
           {
-            echo "probe_exit_code=$probe_exit"
+            echo "probe_exit_code=$(jq -r '.child_return_code // "unavailable"' "$probe_result")"
+            echo "probe_terminating_signal=$(jq -r '.child_terminating_signal // "none"' "$probe_result")"
+            echo "supervisor_signal=$(jq -r '.supervisor_signal // "none"' "$probe_result")"
             echo "model_load_classification=$load_classification"
             echo "probe_status=$probe_status"
             echo "model_loaded=$([[ $load_classification == model_loaded ]] && echo true || echo false)"
             echo "cpu_inference=true"
             echo "n_gpu_layers=0"
             echo "generated_text_published=false"
-            echo "kleidiai_runtime_evidence=$kleidiai_status"
+            echo "oom_evidence=$(jq -r '.oom_evidence // "unavailable"' "$probe_result")"
+            echo "child_group_cleaned=$(jq -r '.child_group_cleaned // false' "$probe_result")"
+            echo "kleidiai_runtime_evidence=unknown"
           } > "$EVIDENCE_DIR/model-load-status.txt"
-          echo "KLEIDIAI_RUNTIME_STATUS=$kleidiai_status" >> "$GITHUB_ENV"
+          echo "KLEIDIAI_RUNTIME_STATUS=unknown" >> "$GITHUB_ENV"
           if [[ "$load_classification" != model_loaded ]]; then
             {
               echo "PRECHECK_BLOCKED=true"
@@ -577,7 +606,7 @@ jobs:
           [[ "$baseline_exit" -eq 0 ]]
 
       - name: Validate and sanitize baseline quality
-        if: always()
+        if: ${{ always() }}
         shell: bash
         run: |
           set -euo pipefail
@@ -657,7 +686,7 @@ jobs:
           fi
 
       - name: Prepare limitations statement
-        if: always()
+        if: ${{ always() }}
         shell: bash
         run: |
           set -euo pipefail
@@ -670,7 +699,7 @@ jobs:
           EOF
 
       - name: Clean up workflow-owned processes and sensitive evidence
-        if: always()
+        if: ${{ always() }}
         shell: bash
         run: |
           set -euo pipefail
@@ -691,8 +720,8 @@ jobs:
             [[ -n "$baseline_dir" && -e "$baseline_dir" ]] && echo true || echo false
           )
           probe_output_existed=false
-          if [[ -e "$RUNNER_TEMP/llama-cli-probe.stdout" ||
-                -e "$RUNNER_TEMP/llama-cli-probe.stderr" ]]; then
+          if [[ -e "$RUNNER_TEMP/aarchtune-model-probe.stdout" ||
+                -e "$RUNNER_TEMP/aarchtune-model-probe.stderr" ]]; then
             probe_output_existed=true
           fi
           license_evidence_source_existed=$(
@@ -727,8 +756,8 @@ jobs:
             fi
           done
           rm -f -- \
-            "$RUNNER_TEMP/llama-cli-probe.stdout" \
-            "$RUNNER_TEMP/llama-cli-probe.stderr" \
+            "$RUNNER_TEMP/aarchtune-model-probe.stdout" \
+            "$RUNNER_TEMP/aarchtune-model-probe.stderr" \
             "$RUNNER_TEMP/aarchtune-baseline.stdout" \
             "$RUNNER_TEMP/aarchtune-baseline.stderr" \
             "$RUNNER_TEMP/model-metadata.json" \
@@ -736,7 +765,6 @@ jobs:
             "$RUNNER_TEMP/model-license-evidence" \
             "$RUNNER_TEMP/model-verification.json" \
             "$RUNNER_TEMP/gguf-metadata-verification.json" \
-            "$RUNNER_TEMP/model-probe-classification.json" \
             "$RUNNER_TEMP/model-download-started" || cleanup_ok=false
           if [[ -n "$baseline_dir" && -d "$baseline_dir" ]]; then
             find "$baseline_dir" -type f -name 'server.log' -delete 2>/dev/null || true
@@ -796,8 +824,8 @@ jobs:
           probe_output_deleted=$(
             if [[ "$probe_output_existed" == false ]]; then
               echo not_created
-            elif [[ ! -e "$RUNNER_TEMP/llama-cli-probe.stdout" &&
-                    ! -e "$RUNNER_TEMP/llama-cli-probe.stderr" ]]; then
+            elif [[ ! -e "$RUNNER_TEMP/aarchtune-model-probe.stdout" &&
+                    ! -e "$RUNNER_TEMP/aarchtune-model-probe.stderr" ]]; then
               echo true
             else
               echo false
@@ -829,7 +857,7 @@ jobs:
 
       - name: Write summary and privacy-scan artifact
         id: privacy_scan
-        if: always()
+        if: ${{ always() }}
         shell: bash
         run: |
           set -euo pipefail
@@ -948,7 +976,7 @@ jobs:
           } > "$EVIDENCE_DIR/privacy-scan.txt"
 
       - name: Upload sanitized native Arm64 quality evidence
-        if: always() && steps.privacy_scan.outcome == 'success'
+        if: ${{ always() && steps.privacy_scan.outcome == 'success' }}
         uses: actions/upload-artifact@v7
         with:
           name: ${{ env.ARTIFACT_NAME }}
@@ -958,7 +986,7 @@ jobs:
           include-hidden-files: false
 
       - name: Preserve quality-precheck outcome
-        if: always()
+        if: ${{ always() }}
         shell: bash
         run: |
           set -euo pipefail

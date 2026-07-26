@@ -608,9 +608,9 @@ def test_workflow_is_baseline_only_and_cleanup_always_runs() -> None:
         for item in steps
         if item.get("name") == "Upload sanitized native Arm64 quality evidence"
     )
-    assert cleanup["if"] == "always()"
-    assert privacy["if"] == "always()"
-    assert upload["if"] == "always() && steps.privacy_scan.outcome == 'success'"
+    assert cleanup["if"] == "${{ always() }}"
+    assert privacy["if"] == "${{ always() }}"
+    assert upload["if"] == "${{ always() && steps.privacy_scan.outcome == 'success' }}"
     assert "aarchtune baseline \\" in text
     assert "aarchtune optimize " not in text
     assert "aarchtune screen " not in text
@@ -619,6 +619,53 @@ def test_workflow_is_baseline_only_and_cleanup_always_runs() -> None:
     assert "llama-bench" not in text
     assert "pkill" not in text
     assert "killall" not in text
+
+
+def test_all_finalization_steps_are_explicitly_guarded_by_always() -> None:
+    names = {
+        "Validate and sanitize baseline quality",
+        "Prepare limitations statement",
+        "Clean up workflow-owned processes and sensitive evidence",
+        "Write summary and privacy-scan artifact",
+        "Upload sanitized native Arm64 quality evidence",
+        "Preserve quality-precheck outcome",
+    }
+    for name in names:
+        condition = _workflow_step(name)["if"]
+        assert condition.startswith("${{ always()")
+        assert "success()" not in condition
+
+
+def test_workflow_concurrency_groups_do_not_collide_across_workflows() -> None:
+    groups: dict[str, str] = {}
+    for path in sorted((ROOT / ".github/workflows").glob("*.yml")):
+        workflow = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+        concurrency = workflow.get("concurrency")
+        if not concurrency:
+            continue
+        group = concurrency["group"]
+        assert group not in groups, (
+            f"{path.name} and {groups[group]} share concurrency group {group!r}"
+        )
+        groups[group] = path.name
+    assert groups["native-arm64-quality-precheck-${{ github.ref }}"] == (
+        "native-arm64-quality-precheck.yml"
+    )
+
+
+def test_probe_step_uses_foreground_structured_supervisor() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    probe = _workflow_step("Probe model loading on CPU")
+    interpret = _workflow_step("Interpret model probe evidence")
+    assert probe["continue-on-error"] == "true"
+    assert "python scripts/model_probe.py" in probe["run"]
+    assert "setsid timeout" not in probe["run"]
+    assert "&" not in probe["run"]
+    assert "wait " not in probe["run"]
+    assert interpret["if"].startswith("${{ always()")
+    assert "model-probe-result.json" in interpret["run"]
+    assert "PRECHECK_BLOCKED=true" in interpret["run"]
+    assert "PRECHECK_OUTCOME=$precheck_outcome" in interpret["run"]
     assert "raw-attempts.jsonl" in text
     assert "retention-days: 14" in text
     assert "resource_incompatible" in text
