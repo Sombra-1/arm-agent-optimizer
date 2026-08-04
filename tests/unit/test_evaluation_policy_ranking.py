@@ -318,6 +318,34 @@ def test_selection_candidate_baseline_no_eligible_and_drift(screen_plan_dir: Pat
         screening_reference=_reference(),
     )
     assert chosen.outcome is SelectionOutcome.CANDIDATE_SELECTED
+    retained_results = [
+        _result(profiles[0], performance=_performance(), quality=_quality("baseline")),
+        _result(
+            profiles[1],
+            performance=_performance(rpm=90, p95=1.1, rss=110),
+            quality=_quality("slower"),
+        ),
+    ]
+    retained_comparisons = [
+        compare_candidate(item, retained_results[0]) for item in retained_results
+    ]
+    retained = select_profile(
+        rankings=rank_candidates(
+            retained_results,
+            [apply_quality_gate(item, retained_results[0], policy, 2) for item in retained_results],
+            retained_comparisons,
+            OptimizationGoal.BALANCED,
+            policy,
+        ),
+        comparisons=retained_comparisons,
+        candidates=profiles[:2],
+        baseline=profiles[0],
+        goal=OptimizationGoal.BALANCED,
+        policy=policy,
+        drift=stable,
+        screening_reference=_reference(),
+    )
+    assert retained.outcome is SelectionOutcome.BASELINE_RETAINED
     none = select_profile(
         rankings=[],
         comparisons=[],

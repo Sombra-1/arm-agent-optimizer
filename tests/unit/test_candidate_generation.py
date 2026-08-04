@@ -157,6 +157,29 @@ def test_goals_produce_meaningfully_different_parallel_and_batch_coverage(
     assert min(item.runtime.batch_size or 10**9 for item in memory.candidates) <= 128
 
 
+def test_memory_candidate_uses_smallest_batch_with_a_valid_microbatch(
+    fake_binary: Path,
+    fake_model: Path,
+    server_capabilities: ServerCapabilities,
+) -> None:
+    search = load_search_space().configuration.model_copy(
+        update={"batch_sizes": [64, 128], "ubatch_sizes": [100]}
+    )
+
+    result = generate_candidates(
+        _input(fake_binary, fake_model),
+        server_capabilities,
+        search,
+        OptimizationGoal.MEMORY,
+        24,
+    )
+
+    assert any(
+        item.runtime.batch_size == 128 and item.runtime.ubatch_size == 100
+        for item in result.candidates
+    )
+
+
 def test_low_core_parallelism_is_excluded(
     fake_binary: Path, fake_model: Path, server_capabilities: ServerCapabilities
 ) -> None:

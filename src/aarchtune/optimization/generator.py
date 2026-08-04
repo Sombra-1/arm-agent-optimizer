@@ -452,7 +452,11 @@ def _drafts(
                 )
             )
 
-    smallest_batch = min(search.batch_sizes)
+    smallest_batch = min(
+        batch
+        for batch in search.batch_sizes
+        if any(ubatch <= batch for ubatch in search.ubatch_sizes)
+    )
     smallest_ubatch = min(value for value in search.ubatch_sizes if value <= smallest_batch)
     drafts.append(
         _with(

@@ -1,0 +1,12 @@
+1
+00:00:00,050 --> 00:00:04,190
+Most inference optimizers ask one question: which configuration is fastest?
+
+2
+00:00:04,190 --> 00:00:11,220
+AArchTune asks a harder one: which configuration is faster, correct, reproducible, and safe to deploy on native Arm64?
+
+3
+00:00:11,220 --> 00:00:18,420
+It tunes GGUF inference through llama.cpp, but it refuses to turn a fast, incorrect response into a recommendation.
+

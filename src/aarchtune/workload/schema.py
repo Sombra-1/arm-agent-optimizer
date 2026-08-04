@@ -114,6 +114,21 @@ class JsonSchemaDefinition(WorkloadModel):
 
     @model_validator(mode="after")
     def validate_schema_definition(self) -> JsonSchemaDefinition:
+        def reject_external_references(value: JsonValue) -> None:
+            if isinstance(value, dict):
+                for key, nested in value.items():
+                    if (
+                        key in {"$ref", "$dynamicRef"}
+                        and isinstance(nested, str)
+                        and not nested.startswith("#")
+                    ):
+                        raise ValueError("external JSON Schema references are not supported")
+                    reject_external_references(nested)
+            elif isinstance(value, list):
+                for nested in value:
+                    reject_external_references(nested)
+
+        reject_external_references(self.schema_definition)
         try:
             Draft202012Validator.check_schema(self.schema_definition)
         except SchemaError as exc:

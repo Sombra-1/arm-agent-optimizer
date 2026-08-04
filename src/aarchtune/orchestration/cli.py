@@ -54,7 +54,13 @@ def optimize_command(
     startup_timeout: Annotated[float, typer.Option("--startup-timeout", min=0.1, max=600)] = 30.0,
     sample_interval: Annotated[float, typer.Option("--sample-interval", min=0.05, max=5)] = 0.1,
     maximum_total_duration: Annotated[
-        float, typer.Option("--maximum-total-duration", min=1, max=86400)
+        float,
+        typer.Option(
+            "--maximum-total-duration",
+            min=1,
+            max=86400,
+            help="Shared baseline, screening, and evaluation execution deadline in seconds.",
+        ),
     ] = 7200.0,
     allow_synthetic: Annotated[bool, typer.Option("--allow-synthetic")] = False,
     allow_non_arm_development: Annotated[bool, typer.Option("--allow-non-arm-development")] = False,

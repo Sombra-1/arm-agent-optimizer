@@ -1,0 +1,20 @@
+1
+00:00:00,050 --> 00:00:02,140
+Here is the measured native result.
+
+2
+00:00:02,140 --> 00:00:05,810
+The workflow completed one hundred thirty-two configured screening executions.
+
+3
+00:00:05,810 --> 00:00:12,050
+Those became eleven distinct low-level signatures, and only four profiles advanced to expensive real-workload evaluation.
+
+4
+00:00:12,050 --> 00:00:17,700
+Every advanced profile failed the unchanged quality policy, so the final outcome was no eligible candidate.
+
+5
+00:00:17,700 --> 00:00:20,880
+That means no speedup claim and no deployment recommendation.
+

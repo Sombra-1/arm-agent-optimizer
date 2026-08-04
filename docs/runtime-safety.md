@@ -40,9 +40,9 @@ for keeping secrets out of command output.
 
 ## HTTP behavior
 
-The HTTPX client disables environment proxy use, performs only non-streaming local
-requests, caps response sizes, and distinguishes connection failures, timeouts, non-2xx
-responses, server errors, invalid JSON, missing completion content, and oversized
-responses. Returned completion text is never executed or interpreted by the runtime
-layer; declarative workload validators handle correctness.
-
+The HTTPX client disables environment proxy use, requests non-streaming completions,
+incrementally reads each local HTTP body, and stops buffering at the configured size
+limit. It distinguishes connection failures, timeouts, non-2xx responses, server errors,
+invalid JSON, missing completion content, and oversized responses. Returned completion
+text is never executed or interpreted by the runtime layer; declarative workload
+validators handle correctness.

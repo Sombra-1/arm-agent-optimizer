@@ -54,6 +54,7 @@ def _run_profile(
     model_path: Path,
     workload_path: Path,
     screening_score: float | None,
+    deadline_monotonic: float,
 ) -> CandidateExecutionResult:
     from aarchtune.optimization.models import CandidateProfile
 
@@ -66,24 +67,41 @@ def _run_profile(
         model_path=model_path,
         workload_path=workload_path,
         screening_score=screening_score,
+        deadline_monotonic=deadline_monotonic,
     )
     _persist_execution(result)
     return result
 
 
-def run_evaluation(config: EvaluationConfig) -> EvaluationRunResult:
+def run_evaluation(
+    config: EvaluationConfig,
+    *,
+    deadline_monotonic: float | None = None,
+) -> EvaluationRunResult:
+    deadline = (
+        deadline_monotonic
+        if deadline_monotonic is not None
+        else time.monotonic() + config.maximum_total_duration_seconds
+    )
     source = load_evaluation_input(config)
     policy_source = load_quality_policy(config.quality_policy_path)
     root = prepare_run_directory(config.output_dir, overwrite=config.overwrite)
     created_at = datetime.now(UTC)
     evaluation_id = generate_evaluation_id(created_at)
     manager = EvaluationManifestManager(root, evaluation_id, created_at, config)
-    started = time.monotonic()
     results: list[CandidateExecutionResult] = []
     failed_executions = 0
     all_servers_stopped = True
     all_samplers_stopped = True
+
+    def remaining_seconds() -> float:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise EvaluationError("Maximum total evaluation duration was reached")
+        return remaining
+
     try:
+        remaining_seconds()
         manager.update(
             status=EvaluationStatus.VALIDATING_SCREENING,
             stage=EvaluationStatus.VALIDATING_SCREENING,
@@ -130,6 +148,7 @@ def run_evaluation(config: EvaluationConfig) -> EvaluationRunResult:
             model_path=source.current_input.model.path,
             workload_path=source.current_input.workload.path,
             screening_score=None,
+            deadline_monotonic=deadline,
         )
         all_servers_stopped &= baseline_start.server_stopped
         all_samplers_stopped &= baseline_start.sampler_stopped
@@ -144,8 +163,7 @@ def run_evaluation(config: EvaluationConfig) -> EvaluationRunResult:
         )
         with JsonlArtifactWriter(failures_path) as failures:
             for planned in plan.candidates:
-                if time.monotonic() - started > config.maximum_total_duration_seconds:
-                    raise EvaluationError("Maximum total evaluation duration was reached")
+                remaining_seconds()
                 result = _run_profile(
                     profile=planned.profile,
                     label=f"candidate-{planned.profile.id}",
@@ -154,6 +172,7 @@ def run_evaluation(config: EvaluationConfig) -> EvaluationRunResult:
                     model_path=source.current_input.model.path,
                     workload_path=source.current_input.workload.path,
                     screening_score=planned.screening_score,
+                    deadline_monotonic=deadline,
                 )
                 results.append(result)
                 all_servers_stopped &= result.server_stopped
@@ -179,8 +198,11 @@ def run_evaluation(config: EvaluationConfig) -> EvaluationRunResult:
                             "Maximum candidate infrastructure failures was reached"
                         )
                 if config.settling_delay_seconds:
+                    if config.settling_delay_seconds >= remaining_seconds():
+                        raise EvaluationError("Maximum total evaluation duration was reached")
                     time.sleep(config.settling_delay_seconds)
 
+        remaining_seconds()
         manager.update(
             status=EvaluationStatus.RUNNING_BASELINE_END,
             stage=EvaluationStatus.RUNNING_BASELINE_END,
@@ -193,6 +215,7 @@ def run_evaluation(config: EvaluationConfig) -> EvaluationRunResult:
             model_path=source.current_input.model.path,
             workload_path=source.current_input.workload.path,
             screening_score=None,
+            deadline_monotonic=deadline,
         )
         all_servers_stopped &= baseline_end.server_stopped
         all_samplers_stopped &= baseline_end.sampler_stopped

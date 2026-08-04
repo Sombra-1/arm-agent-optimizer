@@ -1,5 +1,10 @@
 # Video recording checklist
 
+The final rendered video is published. This pre-recording checklist is retained
+as a reusable production guide; its unchecked boxes are not outstanding release
+work. Final artifact details and public links are in
+[`video/README.md`](../video/README.md).
+
 ## Environment
 
 - [ ] Terminal font is at least 18–20 px and readable at 1080p.
@@ -45,7 +50,7 @@
 
 ## Final capture
 
-- [ ] Final duration is between three and five minutes.
+- [ ] Final duration is less than three minutes, with a 2:50 target.
 - [ ] Opening problem and closing value proposition are both present.
 - [ ] Mouse movement and scrolling are deliberate.
 - [ ] Text remains on screen long enough to read.

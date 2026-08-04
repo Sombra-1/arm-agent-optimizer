@@ -59,7 +59,10 @@ leading explanations, and trailing prose fail. JSON is not extracted or repaired
 ### `json_schema`
 
 Validates against JSON Schema Draft 2020-12 using `jsonschema`. The schema itself is
-checked while loading the workload.
+checked while loading the workload. Internal fragment references are supported;
+external and relative resource references are rejected, so validation never retrieves a
+schema from the network. Runtime validation is isolated behind a one-second process
+deadline, including JSON Schema `pattern` evaluation.
 
 ```json
 {"type": "json_schema", "schema": {"type": "object", "required": ["status"]}}
@@ -104,9 +107,8 @@ Search the raw response. Matching is case-sensitive by default; set `case_sensit
 
 Searches the raw response with a pattern compiled during workload loading. Supported
 flags are `IGNORECASE`, `MULTILINE`, `DOTALL`, and `ASCII`. Patterns are limited to
-1,024 characters. This bounding does not prevent every pathological regular expression;
-workload files are expected to be reviewed, trusted project inputs. Replacement code is
-never accepted or evaluated.
+1,024 characters and execute in an isolated process with a one-second deadline.
+Replacement code is never accepted or evaluated.
 
 ```json
 {"type": "regex_match", "pattern": "^(supported|unsupported|uncertain)$", "flags": ["IGNORECASE"]}
@@ -211,8 +213,6 @@ Exit codes:
 ## Known limitations
 
 Quality checks measure only the declarative validators chosen by the workload author.
-They do not prove general correctness or safety. Regex evaluation does not provide a
-hard execution-time sandbox. The v1 path syntax cannot address keys containing dots.
-Fixture evaluation does not run a model and must not be presented as real inference
-quality evidence.
-
+They do not prove general correctness or safety. The v1 path syntax cannot address keys
+containing dots. Fixture evaluation does not run a model and must not be presented as
+real inference quality evidence.

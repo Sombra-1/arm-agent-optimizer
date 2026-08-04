@@ -5,9 +5,12 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from multiprocessing import get_context
+from multiprocessing.connection import Connection
 from typing import cast
 
 from jsonschema import Draft202012Validator
+from referencing import Registry
 
 from aarchtune.workload.json_path import resolve_json_path
 from aarchtune.workload.schema import (
@@ -30,6 +33,8 @@ from aarchtune.workload.schema import (
 )
 
 MAX_OBSERVED_CHARACTERS = 4_096
+VALIDATOR_TIMEOUT_SECONDS = 1.0
+_PROCESS_CONTEXT = get_context("forkserver")
 
 
 @dataclass(frozen=True)
@@ -78,25 +83,17 @@ def _json_required_failure(definition_type: ValidatorType, parsed: ParsedJson) -
     )
 
 
-def evaluate_validator(
-    definition: ValidatorDefinition,
-    response: ResponseInput,
-    parsed: ParsedJson,
+def _evaluate_isolated(
+    definition: JsonSchemaDefinition | RegexMatchDefinition,
+    response_text: str,
+    parsed_value: object | None,
 ) -> ValidatorResult:
-    """Evaluate one schema-validated definition without executing workload content."""
-
-    if isinstance(definition, ValidJsonDefinition):
-        return ValidatorResult(
-            passed=parsed.valid,
-            validator=definition.type,
-            reason="Response is valid JSON" if parsed.valid else parsed.error or "Invalid JSON",
-        )
-
     if isinstance(definition, JsonSchemaDefinition):
-        if not parsed.valid:
-            return _json_required_failure(definition.type, parsed)
         errors = sorted(
-            Draft202012Validator(definition.schema_definition).iter_errors(parsed.value),
+            Draft202012Validator(
+                definition.schema_definition,
+                registry=Registry(),
+            ).iter_errors(parsed_value),
             key=lambda error: tuple(str(item) for item in error.absolute_path),
         )
         if not errors:
@@ -116,6 +113,88 @@ def evaluate_validator(
             reason=f"JSON Schema mismatch: {error.message}",
             observed=_safe_json(error.instance),
         )
+
+    matched = re.search(
+        definition.pattern,
+        response_text,
+        flags=regex_flags_value(definition.flags),
+    )
+    observed = matched.group(0) if matched else None
+    if observed is not None and len(observed) > MAX_OBSERVED_CHARACTERS:
+        observed = f"<regex match omitted: {len(observed)} characters>"
+    return ValidatorResult(
+        passed=matched is not None,
+        validator=definition.type,
+        reason="Regular expression matched" if matched else "Regular expression did not match",
+        observed=observed,
+        expected=definition.pattern,
+    )
+
+
+def _validator_worker(
+    connection: Connection,
+    definition: JsonSchemaDefinition | RegexMatchDefinition,
+    response_text: str,
+    parsed_value: object | None,
+) -> None:
+    try:
+        connection.send(("ok", _evaluate_isolated(definition, response_text, parsed_value)))
+    except Exception as exc:
+        connection.send(("error", f"{type(exc).__name__}: {exc}"))
+    finally:
+        connection.close()
+
+
+def _bounded_evaluation(
+    definition: JsonSchemaDefinition | RegexMatchDefinition,
+    response_text: str,
+    parsed_value: object | None,
+) -> ValidatorResult:
+    receiver, sender = _PROCESS_CONTEXT.Pipe(duplex=False)
+    process = _PROCESS_CONTEXT.Process(
+        target=_validator_worker,
+        args=(sender, definition, response_text, parsed_value),
+    )
+    process.start()
+    sender.close()
+    try:
+        if receiver.poll(VALIDATOR_TIMEOUT_SECONDS):
+            status, payload = cast(tuple[str, object], receiver.recv())
+            if status == "ok" and isinstance(payload, ValidatorResult):
+                return payload
+            reason = f"Validator failed safely: {payload}"
+        else:
+            reason = f"Validator exceeded the {VALIDATOR_TIMEOUT_SECONDS:.1f}-second safety limit"
+    finally:
+        receiver.close()
+        process.join(timeout=0.1)
+        if process.is_alive():
+            process.terminate()
+            process.join(timeout=0.1)
+        if process.is_alive():
+            process.kill()
+            process.join()
+    return ValidatorResult(passed=False, validator=definition.type, reason=reason)
+
+
+def evaluate_validator(
+    definition: ValidatorDefinition,
+    response: ResponseInput,
+    parsed: ParsedJson,
+) -> ValidatorResult:
+    """Evaluate one schema-validated definition without executing workload content."""
+
+    if isinstance(definition, ValidJsonDefinition):
+        return ValidatorResult(
+            passed=parsed.valid,
+            validator=definition.type,
+            reason="Response is valid JSON" if parsed.valid else parsed.error or "Invalid JSON",
+        )
+
+    if isinstance(definition, JsonSchemaDefinition):
+        if not parsed.valid:
+            return _json_required_failure(definition.type, parsed)
+        return _bounded_evaluation(definition, response.text, parsed.value)
 
     if isinstance(definition, RequiredFieldsDefinition):
         if not parsed.valid:
@@ -200,18 +279,7 @@ def evaluate_validator(
         )
 
     if isinstance(definition, RegexMatchDefinition):
-        matched = re.search(
-            definition.pattern,
-            response.text,
-            flags=regex_flags_value(definition.flags),
-        )
-        return ValidatorResult(
-            passed=matched is not None,
-            validator=definition.type,
-            reason="Regular expression matched" if matched else "Regular expression did not match",
-            observed=matched.group(0) if matched else None,
-            expected=definition.pattern,
-        )
+        return _bounded_evaluation(definition, response.text, parsed.value)
 
     if isinstance(definition, MaximumResponseLengthDefinition):
         observed_length = len(response.text)

@@ -153,11 +153,21 @@ def write_reproduction_script(path: Path, context: FinalizationContext) -> None:
         str(config.startup_timeout_seconds),
         "--sample-interval",
         str(config.sample_interval_seconds),
+        "--settling-delay",
+        str(config.settling_delay_seconds),
+        "--shutdown-timeout",
+        str(config.shutdown_timeout_seconds),
+        "--maximum-candidate-failures",
+        str(config.maximum_candidate_failures),
+        "--maximum-total-duration",
+        str(config.maximum_total_duration_seconds),
     ]
     if config.quality_policy_path is not None:
         args.extend(["--quality-policy", str(config.quality_policy_path)])
     if context.summary.synthetic_fixture:
         args.append("--allow-synthetic")
+    if config.allow_runtime_change:
+        args.append("--allow-runtime-change")
     quoted = []
     for argument in args:
         quoted.append(
@@ -209,6 +219,7 @@ def write_compose(
     model = profile.generated_command[profile.generated_command.index("--model") + 1]
     container_command = list(profile.generated_command[1:])
     container_command[container_command.index(model)] = "/models/model.gguf"
+    container_command[container_command.index("--host") + 1] = "0.0.0.0"
     compose = {
         "services": {
             "llama-server": {

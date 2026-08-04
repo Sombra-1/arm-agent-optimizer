@@ -31,12 +31,13 @@ def measure_task_attempt(
     run_id: str,
     repetition: int,
     task_index: int,
+    timeout_seconds: float | None = None,
 ) -> TaskAttemptResult:
     """Measure with monotonic nanoseconds, then evaluate without interpreting output."""
 
     started_at = datetime.now(UTC)
     started_ns = time.perf_counter_ns()
-    detailed = client.chat_completion_detailed(task)
+    detailed = client.chat_completion_detailed(task, timeout_seconds=timeout_seconds)
     finished_ns = time.perf_counter_ns()
     finished_at = datetime.now(UTC)
     duration_ns = finished_ns - started_ns

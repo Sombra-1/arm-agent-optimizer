@@ -1,0 +1,1 @@
+Most inference optimizers ask one question: which configuration is fastest? AArchTune asks a harder one: which configuration is faster, correct, reproducible, and safe to deploy on native Arm64? It tunes GGUF inference through llama.cpp, but it refuses to turn a fast, incorrect response into a recommendation.

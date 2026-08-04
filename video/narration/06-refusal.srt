@@ -1,0 +1,16 @@
+1
+00:00:00,050 --> 00:00:03,950
+This synthetic product-behavior example shows why the refusal state matters.
+
+2
+00:00:03,950 --> 00:00:10,500
+A candidate can lead the speed chart and still be rejected when task success, JSON validity, or semantic validators regress.
+
+3
+00:00:10,500 --> 00:00:14,880
+Synthetic screens are clearly labelled and never presented as Arm performance evidence.
+
+4
+00:00:14,880 --> 00:00:19,320
+They demonstrate the safety control: faster measurements cannot bypass correctness.
+

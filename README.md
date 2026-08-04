@@ -47,6 +47,22 @@ It refuses to convert faster-but-wrong measurements into a recommendation.
 
 No model is trained or modified. AArchTune tunes runtime configuration only.
 
+## What was optimized
+
+AArchTune replaces manual, speed-first llama.cpp tuning with a bounded,
+hardware-aware workflow: equivalent low-level signatures are deduplicated,
+expensive candidates are filtered before real-workload evaluation, and quality
+plus drift must pass before ranking.
+
+The native workflow measured this funnel directly: 132 screening executions
+completed, producing 11 distinct low-level signatures, and four profiles
+advanced to real-workload evaluation. All four failed the unchanged quality
+policy, so AArchTune emitted `no_eligible_candidate` instead of an unsafe
+recommendation.
+
+That is measurable developer-workflow and decision-quality evidence. It is not
+an end-to-end inference speedup claim.
+
 ## Why Arm64
 
 Arm cloud and server CPUs differ in core topology, memory headroom, NUMA
@@ -206,7 +222,7 @@ scripts/validate-release.sh
 
 `doctor` describes the machine on which it runs; do not present x86 output as
 Arm evidence. The demo should use the existing native report and sanitized
-artifact for native claims. See the [three-to-five-minute demo
+artifact for native claims. See the [under-three-minute demo
 script](docs/DEMO_SCRIPT.md).
 
 ## Evidence and privacy
@@ -314,20 +330,21 @@ ruff format --check .
 mypy src
 ```
 
-The release suite contains 514 automated tests with 90% aggregate coverage.
+The release suite contains 518 automated tests with 90% aggregate coverage.
 Normal CI validates Python 3.11 and 3.12. Synthetic fixtures are explicitly
 labelled and are product-behavior evidence, never native performance evidence.
 
 ## Submission status
 
 Experimental work is frozen. No full-performance recommendation or unsupported
-speedup claim is published. The remaining work is video recording, final link
-verification, and Devpost submission.
+speedup claim is published. The final project and demo video are published on
+[Devpost](https://devpost.com/software/aarchtune), and the video is also
+available directly on [YouTube](https://youtu.be/RemP5SKa0RM).
 
 - [Final validation report](docs/FINAL_VALIDATION_REPORT.md)
 - [Devpost submission text](docs/devpost-submission.md)
 - [Demo script](docs/DEMO_SCRIPT.md)
-- [Video recording checklist](docs/VIDEO_RECORDING_CHECKLIST.md)
+- [Video production bundle](video/README.md)
 - [Submission checklist](docs/SUBMISSION_CHECKLIST.md)
 
 ## License

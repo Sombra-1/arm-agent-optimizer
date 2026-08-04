@@ -48,8 +48,21 @@ def evaluate_command(
     quality_policy: Annotated[Path | None, typer.Option("--quality-policy")] = None,
     request_timeout: Annotated[float, typer.Option("--request-timeout", min=0.1, max=600.0)] = 60.0,
     startup_timeout: Annotated[float, typer.Option("--startup-timeout", min=0.1, max=600.0)] = 30.0,
+    shutdown_timeout: Annotated[float, typer.Option("--shutdown-timeout", min=0.1, max=60.0)] = 5.0,
     sample_interval: Annotated[float, typer.Option("--sample-interval", min=0.05, max=5.0)] = 0.1,
     settling_delay: Annotated[float, typer.Option("--settling-delay", min=0.0, max=60.0)] = 0.0,
+    maximum_candidate_failures: Annotated[
+        int, typer.Option("--maximum-candidate-failures", min=1, max=100)
+    ] = 3,
+    maximum_total_duration: Annotated[
+        float,
+        typer.Option(
+            "--maximum-total-duration",
+            min=1.0,
+            max=86_400.0,
+            help="Total evaluation execution deadline in seconds.",
+        ),
+    ] = 7200.0,
     allow_synthetic: Annotated[bool, typer.Option("--allow-synthetic")] = False,
     allow_runtime_change: Annotated[bool, typer.Option("--allow-runtime-change")] = False,
     overwrite: Annotated[bool, typer.Option("--overwrite")] = False,
@@ -72,8 +85,11 @@ def evaluate_command(
                 quality_policy_path=quality_policy,
                 request_timeout_seconds=request_timeout,
                 startup_timeout_seconds=startup_timeout,
+                shutdown_timeout_seconds=shutdown_timeout,
                 sample_interval_seconds=sample_interval,
                 settling_delay_seconds=settling_delay,
+                maximum_candidate_failures=maximum_candidate_failures,
+                maximum_total_duration_seconds=maximum_total_duration,
                 allow_synthetic=allow_synthetic,
                 allow_runtime_change=allow_runtime_change,
                 overwrite=overwrite,

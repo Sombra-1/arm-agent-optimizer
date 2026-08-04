@@ -272,7 +272,15 @@ def test_run_and_reproduction_scripts_use_safe_arrays(final_bundle: Path) -> Non
         assert path.stat().st_mode & 0o100
     assert "127.0.0.1" in run_script.read_text()
     assert "sha256sum" in run_script.read_text()
-    assert "Refusing to overwrite" in reproduction.read_text()
+    reproduction_text = reproduction.read_text()
+    assert "Refusing to overwrite" in reproduction_text
+    for option in (
+        "--settling-delay",
+        "--shutdown-timeout",
+        "--maximum-candidate-failures",
+        "--maximum-total-duration",
+    ):
+        assert option in reproduction_text
 
 
 def test_no_container_image_produces_explicit_status(final_bundle: Path) -> None:
@@ -301,6 +309,8 @@ def test_explicit_container_image_produces_restricted_compose(
     service = compose["services"]["llama-server"]
     assert service["image"] == "ghcr.io/example/llama-cpp:test"
     assert service["ports"] == ["127.0.0.1:8080:8080"]
+    host_index = service["command"].index("--host")
+    assert service["command"][host_index + 1] == "0.0.0.0"
     assert service["volumes"][0].endswith(":/models/model.gguf:ro")
     assert "privileged" not in service and "network_mode" not in service
     assert "healthcheck" in service

@@ -267,6 +267,52 @@ def test_interruption_preserves_manifest_and_cleanup(
     assert (result.output_dir / "hardware/hardware.json").is_file()
 
 
+def test_total_duration_is_shared_across_pipeline_stages(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from aarchtune.orchestration import runner
+
+    clock = [0.0]
+    baseline_called = False
+    planning_called = False
+
+    def baseline(*_args: object, **_kwargs: object) -> None:
+        nonlocal baseline_called
+        baseline_called = True
+        clock[0] = 2.0
+
+    def planning(*_args: object, **_kwargs: object) -> None:
+        nonlocal planning_called
+        planning_called = True
+
+    monkeypatch.setattr(runner.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(runner, "run_baseline_stage", baseline)
+    monkeypatch.setattr(runner, "run_planning_stage", planning)
+    monkeypatch.setattr(
+        runner,
+        "_reference",
+        lambda stage, root, reused: StageReference(
+            stage=stage,
+            status=OptimizeStageStatus.COMPLETED,
+            path=stage.value,
+            identity=None,
+            manifest_sha256="0" * 64,
+            reused=reused,
+            validation_passed=True,
+        ),
+    )
+    config = _config(tmp_path / "deadline").model_copy(
+        update={"maximum_total_duration_seconds": 1.0}
+    )
+
+    with pytest.raises(StageError, match="Maximum total optimization duration"):
+        run_optimization(config)
+
+    assert baseline_called is True
+    assert planning_called is False
+
+
 @pytest.mark.parametrize(
     ("attribute", "expected_stage"),
     [

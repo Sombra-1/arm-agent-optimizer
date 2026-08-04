@@ -1,0 +1,1 @@
+The real evidence was collected on native Linux AArch64, using four Arm Neoverse N2 cores and CPU-only llama.cpp. The runtime source, binary, model, workload, and policy are pinned by hashes. KleidiAI was compiled into the tested build, but the Q4 K tensors had no matching kernel, so AArchTune makes no unsupported runtime-acceleration claim.
