@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -175,9 +176,12 @@ def run_optimization(config: OptimizeConfig) -> OptimizeRunResult:
         start_index = 0
     active = PIPELINE[start_index]
     diagnostic_exit: Literal[0, 1, 2, 3, 4] = 0
+    deadline = time.monotonic() + resolved.maximum_total_duration_seconds
     try:
         for stage in PIPELINE[start_index:]:
             active = stage
+            if stage is not OptimizeStage.FINALIZATION and time.monotonic() >= deadline:
+                raise StageError("Maximum total optimization duration was reached")
             manager.update(
                 status=OptimizeStageStatus.RUNNING,
                 active_stage=stage,
@@ -196,13 +200,23 @@ def run_optimization(config: OptimizeConfig) -> OptimizeRunResult:
                     )
                 atomic_write_json(path / "hardware.json", hardware)
             elif stage is OptimizeStage.BASELINE:
-                run_baseline_stage(resolved, path)
+                run_baseline_stage(resolved, path, deadline_monotonic=deadline)
             elif stage is OptimizeStage.PLANNING:
                 run_planning_stage(resolved, path, root / "baseline")
             elif stage is OptimizeStage.SCREENING:
-                run_screening_stage(resolved, path, root / "plan")
+                run_screening_stage(
+                    resolved,
+                    path,
+                    root / "plan",
+                    deadline_monotonic=deadline,
+                )
             elif stage is OptimizeStage.EVALUATION:
-                evaluation_exit = run_evaluation_stage(resolved, path, root / "screening")
+                evaluation_exit = run_evaluation_stage(
+                    resolved,
+                    path,
+                    root / "screening",
+                    deadline_monotonic=deadline,
+                )
                 diagnostic_exit = evaluation_exit
             elif stage is OptimizeStage.FINALIZATION:
                 finalization_exit = run_finalization_stage(resolved, path, root / "evaluation")

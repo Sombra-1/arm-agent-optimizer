@@ -1,0 +1,12 @@
+1
+00:00:00,050 --> 00:00:03,540
+This is a working open-source project, not a benchmark mock-up.
+
+2
+00:00:03,540 --> 00:00:13,820
+Its release gate now runs five hundred eighteen automated tests with ninety percent coverage, strict typing, lint and format checks, command-line validation, license checks, artifact checks, and secret scanning.
+
+3
+00:00:13,820 --> 00:00:19,230
+Normal continuous integration repeats that gate on Python three point eleven and three point twelve.
+

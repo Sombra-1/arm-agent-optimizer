@@ -22,14 +22,14 @@ live in [SUBMISSION_CHECKLIST.md](SUBMISSION_CHECKLIST.md).
 - [x] No unsupported speedup claim is published.
 - [x] `scripts/validate-release.sh` passes.
 
-## Manual review before submission
+## Publication review
 
-- [ ] Render the README Mermaid diagram on GitHub.
-- [ ] Test installation commands in a fresh environment.
-- [ ] Record and review the final video.
+- [x] Render the README Mermaid diagram on GitHub.
+- [x] Test installation commands in a fresh environment.
+- [x] Record and review the final video.
 - [x] Refresh the three repository-facing screenshots.
-- [ ] Verify repository visibility and all public links.
-- [ ] Preview and submit the final Devpost entry.
-- [ ] Save the final submission URL and confirmation.
+- [x] Verify repository visibility and all public links.
+- [x] Publish and review the final Devpost entry.
+- [x] Verify the final submission URL and published state.
 
-No tag move or GitHub release is part of this documentation task.
+No tag move or GitHub release was required for this submission.

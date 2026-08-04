@@ -191,7 +191,11 @@ def _write_failure(
     return failure
 
 
-def run_baseline(config: BaselineRunConfig) -> BaselineRunResult:
+def run_baseline(
+    config: BaselineRunConfig,
+    *,
+    deadline_monotonic: float | None = None,
+) -> BaselineRunResult:
     """Execute exactly one fixed configuration and preserve partial evidence on failure."""
 
     capabilities, runtime_config = _preflight(config)
@@ -225,7 +229,16 @@ def run_baseline(config: BaselineRunConfig) -> BaselineRunResult:
     run_started_ns = time.perf_counter_ns()
     synthetic = capabilities.version is not None and "synthetic" in capabilities.version.lower()
 
+    def remaining_seconds() -> float | None:
+        if deadline_monotonic is None:
+            return None
+        remaining = deadline_monotonic - time.monotonic()
+        if remaining <= 0:
+            raise BaselineRuntimeError("Maximum total duration was reached")
+        return remaining
+
     try:
+        remaining_seconds()
         stage = RunStage.INSPECTING
         manager.update(stage=stage, status=RunStatus.RUNNING)
         hardware = detect_hardware(model_path=config.model_path)
@@ -236,6 +249,7 @@ def run_baseline(config: BaselineRunConfig) -> BaselineRunResult:
 
         stage = RunStage.HASHING
         manager.update(stage=stage)
+        remaining_seconds()
         model_info = _file_provenance(config.model_path, synthetic=synthetic)
         binary_info = _file_provenance(config.binary_path, synthetic=synthetic)
         if not model_info.hash.completed or not binary_info.hash.completed:
@@ -266,6 +280,17 @@ def run_baseline(config: BaselineRunConfig) -> BaselineRunResult:
         (output_dir / "process-samples.jsonl").touch()
         stage = RunStage.STARTING_SERVER
         manager.update(stage=stage)
+        remaining = remaining_seconds()
+        if remaining is not None:
+            if remaining < 0.1:
+                raise BaselineRuntimeError("Insufficient time remains to start the server")
+            runtime_config = runtime_config.model_copy(
+                update={
+                    "startup_timeout_seconds": min(
+                        runtime_config.startup_timeout_seconds, remaining
+                    )
+                }
+            )
         server = LlamaServerProcess(runtime_config, capabilities).start()
         if server.pid is None:
             raise BaselineRuntimeError("Owned server did not expose a process ID")
@@ -301,7 +326,15 @@ def run_baseline(config: BaselineRunConfig) -> BaselineRunResult:
         for index in range(config.warmup_requests):
             task = workload.tasks[index % len(workload.tasks)]
             warmup_ids.append(task.id)
-            response = server.client.chat_completion(task)
+            remaining = remaining_seconds()
+            response = server.client.chat_completion(
+                task,
+                timeout_seconds=(
+                    min(config.request_timeout_seconds, remaining)
+                    if remaining is not None
+                    else None
+                ),
+            )
             warmup_success.append(response.request_succeeded)
             if not server.is_running:
                 raise BaselineRuntimeError("Server exited during warm-up")
@@ -312,8 +345,14 @@ def run_baseline(config: BaselineRunConfig) -> BaselineRunResult:
         stage = RunStage.MEASURING
         manager.update(stage=stage)
         sampler.set_phase("measured")
+        remaining = remaining_seconds()
         sampler.wait_for_phase_sample(
-            "measured", timeout_seconds=max(1.0, config.sample_interval_seconds * 3)
+            "measured",
+            timeout_seconds=(
+                min(max(1.0, config.sample_interval_seconds * 3), remaining)
+                if remaining is not None
+                else max(1.0, config.sample_interval_seconds * 3)
+            ),
         )
         measured_started_at = datetime.now(UTC)
         measured_started_ns = time.perf_counter_ns()
@@ -324,6 +363,7 @@ def run_baseline(config: BaselineRunConfig) -> BaselineRunResult:
         ):
             for repetition in range(1, config.repetitions + 1):
                 for task_index, task in enumerate(workload.tasks):
+                    remaining = remaining_seconds()
                     attempt = measure_task_attempt(
                         client=server.client,
                         workload=workload,
@@ -331,6 +371,11 @@ def run_baseline(config: BaselineRunConfig) -> BaselineRunResult:
                         run_id=run_id,
                         repetition=repetition,
                         task_index=task_index,
+                        timeout_seconds=(
+                            min(config.request_timeout_seconds, remaining)
+                            if remaining is not None
+                            else None
+                        ),
                     )
                     raw_writer.append(attempt.raw)
                     metrics_writer.append(attempt.measurement)
@@ -342,7 +387,11 @@ def run_baseline(config: BaselineRunConfig) -> BaselineRunResult:
                         consecutive_failures += 1
                         if not server.is_running:
                             raise BaselineRuntimeError("Server exited during measured execution")
-                        probe = server.client.get_readiness("/health", timeout_seconds=0.25)
+                        remaining = remaining_seconds()
+                        probe = server.client.get_readiness(
+                            "/health",
+                            timeout_seconds=min(0.25, remaining) if remaining is not None else 0.25,
+                        )
                         if not probe.succeeded:
                             raise BaselineRuntimeError(
                                 f"Readiness was lost after request failure: {probe.error}"

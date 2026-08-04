@@ -48,6 +48,31 @@ Performance ranking happens only after evidence completeness and workload
 quality pass. Failed candidates keep diagnostic evidence but cannot enter final
 ranking.
 
+## What was optimized and measured
+
+The baseline workflow AArchTune replaces is manual, speed-first configuration
+testing: benchmark several llama.cpp settings, keep the fastest number, and
+document the environment afterward. That approach repeats equivalent low-level
+configurations and can promote output that is fast but wrong.
+
+AArchTune changes that workflow in four concrete ways:
+
+1. hardware facts constrain a deterministic candidate plan;
+2. low-level signatures are deduplicated before expensive workload evaluation;
+3. quality and drift gates run before performance ranking; and
+4. every decision is bound to reusable provenance and validation artifacts.
+
+The completed native run measured the resulting optimization funnel: 132
+screening executions completed, producing 11 distinct low-level signatures, and
+only four profiles advanced to expensive real-workload evaluation. None passed
+the unchanged quality policy, so the system correctly emitted
+`no_eligible_candidate`.
+
+This is measurable developer-workflow and decision-quality evidence, not an
+end-to-end inference speedup claim. It shows which repetitive work was
+automated, which candidates reached the expensive stage, and why an unsafe
+recommendation was avoided.
+
 ## How Arm technology is used
 
 Real optimization requires native Linux AArch64. AArchTune records Arm CPU
@@ -95,8 +120,9 @@ to deploy a faster-but-incorrect configuration.
 
 AArchTune uses typed Pydantic artifacts, deterministic stage boundaries,
 SHA-256 provenance, isolated process groups, bounded output/timeouts, loopback
-server binding, declarative validators, and resumable orchestration that trusts
-only revalidated completed stages.
+server binding, network-disabled JSON Schema resolution, time-isolated
+declarative validators, and resumable orchestration that trusts only revalidated
+completed stages.
 
 The final bundle includes:
 
@@ -136,7 +162,7 @@ conclusion.
   planning, safe process ownership, and candidate eligibility controls.
 - Built validated final bundles and canonical Optimization Passports.
 - Kept native evidence visibly separate from synthetic product-behavior tests.
-- Passed 514 automated tests with 90% aggregate coverage, strict MyPy, Ruff, and
+- Passed 518 automated tests with 90% aggregate coverage, strict MyPy, Ruff, and
   Python 3.11/3.12 CI.
 
 ## What we learned
@@ -167,8 +193,8 @@ conclusion.
 
 ## What is next
 
-Experimental work is frozen for submission. The immediate next steps are video
-recording, final public-link review, and Devpost publication.
+The project and final demo video are published. Native performance
+experimentation remains frozen for this submission.
 
 Future work after submission may add repeated measurements on dedicated Arm
 hardware, broader Arm server families, more representative workloads,

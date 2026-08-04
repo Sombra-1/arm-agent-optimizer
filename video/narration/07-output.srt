@@ -1,0 +1,16 @@
+1
+00:00:00,050 --> 00:00:03,570
+The reusable output is an Optimization Passport and evidence bundle.
+
+2
+00:00:03,570 --> 00:00:11,000
+It binds hardware, runtime, model, workload, quality policy, candidate plan, drift checks, cleanup proof, and every selection decision.
+
+3
+00:00:11,000 --> 00:00:14,720
+A deployment bundle is produced only when an eligible profile exists.
+
+4
+00:00:14,720 --> 00:00:19,340
+Missing or incomplete evidence stays missing instead of becoming a convenient performance story.
+

@@ -1,0 +1,1 @@
+This synthetic product-behavior example shows why the refusal state matters. A candidate can lead the speed chart and still be rejected when task success, JSON validity, or semantic validators regress. Synthetic screens are clearly labelled and never presented as Arm performance evidence. They demonstrate the safety control: faster measurements cannot bypass correctness.

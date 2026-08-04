@@ -58,20 +58,28 @@ def validate_baseline(path: Path) -> tuple[bool, str | None]:
     return True, None
 
 
-def run_baseline_stage(config: OptimizeConfig, path: Path) -> None:
-    result = run_baseline(
-        BaselineRunConfig(
-            binary_path=config.server_binary,
-            model_path=config.model,
-            workload_path=config.workload,
-            output_dir=path,
-            repetitions=config.baseline_repetitions,
-            warmup_requests=config.warmup_requests,
-            request_timeout_seconds=config.request_timeout_seconds,
-            startup_timeout_seconds=config.startup_timeout_seconds,
-            sample_interval_seconds=config.sample_interval_seconds,
-            overwrite=path.exists() and any(path.iterdir()),
-        )
+def run_baseline_stage(
+    config: OptimizeConfig,
+    path: Path,
+    *,
+    deadline_monotonic: float | None = None,
+) -> None:
+    baseline_config = BaselineRunConfig(
+        binary_path=config.server_binary,
+        model_path=config.model,
+        workload_path=config.workload,
+        output_dir=path,
+        repetitions=config.baseline_repetitions,
+        warmup_requests=config.warmup_requests,
+        request_timeout_seconds=config.request_timeout_seconds,
+        startup_timeout_seconds=config.startup_timeout_seconds,
+        sample_interval_seconds=config.sample_interval_seconds,
+        overwrite=path.exists() and any(path.iterdir()),
+    )
+    result = (
+        run_baseline(baseline_config)
+        if deadline_monotonic is None
+        else run_baseline(baseline_config, deadline_monotonic=deadline_monotonic)
     )
     if result.exit_code:
         manifest_path = path / "manifest.json"
@@ -102,20 +110,29 @@ def run_planning_stage(config: OptimizeConfig, path: Path, baseline: Path) -> No
         raise StageError("Plan validation failed: " + "; ".join(validation.errors))
 
 
-def run_screening_stage(config: OptimizeConfig, path: Path, plan: Path) -> None:
-    result = run_screening(
-        ScreeningConfig(
-            plan_dir=plan,
-            bench_binary=config.bench_binary,
-            output_dir=path,
-            scenario_path=config.screening_scenarios,
-            advance_count=config.advance_count,
-            repetitions=config.screening_repetitions,
-            total_timeout_seconds=config.maximum_total_duration_seconds,
-            sample_interval_seconds=config.sample_interval_seconds,
-            allow_synthetic=config.allow_synthetic,
-            overwrite=path.exists() and any(path.iterdir()),
-        )
+def run_screening_stage(
+    config: OptimizeConfig,
+    path: Path,
+    plan: Path,
+    *,
+    deadline_monotonic: float | None = None,
+) -> None:
+    screening_config = ScreeningConfig(
+        plan_dir=plan,
+        bench_binary=config.bench_binary,
+        output_dir=path,
+        scenario_path=config.screening_scenarios,
+        advance_count=config.advance_count,
+        repetitions=config.screening_repetitions,
+        total_timeout_seconds=config.maximum_total_duration_seconds,
+        sample_interval_seconds=config.sample_interval_seconds,
+        allow_synthetic=config.allow_synthetic,
+        overwrite=path.exists() and any(path.iterdir()),
+    )
+    result = (
+        run_screening(screening_config)
+        if deadline_monotonic is None
+        else run_screening(screening_config, deadline_monotonic=deadline_monotonic)
     )
     validation = validate_screening_directory(path)
     if result.summary is None:
@@ -125,23 +142,30 @@ def run_screening_stage(config: OptimizeConfig, path: Path, plan: Path) -> None:
 
 
 def run_evaluation_stage(
-    config: OptimizeConfig, path: Path, screening: Path
+    config: OptimizeConfig,
+    path: Path,
+    screening: Path,
+    *,
+    deadline_monotonic: float | None = None,
 ) -> Literal[0, 2, 3, 4]:
-    result = run_evaluation(
-        EvaluationConfig(
-            screening_dir=screening,
-            output_dir=path,
-            repetitions=config.evaluation_repetitions,
-            warmup_requests=config.warmup_requests,
-            quality_policy_path=config.quality_policy,
-            request_timeout_seconds=config.request_timeout_seconds,
-            startup_timeout_seconds=config.startup_timeout_seconds,
-            sample_interval_seconds=config.sample_interval_seconds,
-            maximum_total_duration_seconds=config.maximum_total_duration_seconds,
-            allow_synthetic=config.allow_synthetic,
-            allow_runtime_change=config.allow_runtime_change,
-            overwrite=path.exists() and any(path.iterdir()),
-        )
+    evaluation_config = EvaluationConfig(
+        screening_dir=screening,
+        output_dir=path,
+        repetitions=config.evaluation_repetitions,
+        warmup_requests=config.warmup_requests,
+        quality_policy_path=config.quality_policy,
+        request_timeout_seconds=config.request_timeout_seconds,
+        startup_timeout_seconds=config.startup_timeout_seconds,
+        sample_interval_seconds=config.sample_interval_seconds,
+        maximum_total_duration_seconds=config.maximum_total_duration_seconds,
+        allow_synthetic=config.allow_synthetic,
+        allow_runtime_change=config.allow_runtime_change,
+        overwrite=path.exists() and any(path.iterdir()),
+    )
+    result = (
+        run_evaluation(evaluation_config)
+        if deadline_monotonic is None
+        else run_evaluation(evaluation_config, deadline_monotonic=deadline_monotonic)
     )
     validation = validate_evaluation_directory(path)
     if result.exit_code == 2:

@@ -46,7 +46,7 @@ The final repository validation establishes:
 - clean release validation;
 - strict MyPy;
 - Ruff lint and formatting checks;
-- 514 automated tests with 90% aggregate coverage;
+- 518 automated tests with 90% aggregate coverage;
 - normal CI on Python 3.11 and 3.12;
 - native Arm64 workflow execution;
 - immutable model, source-model, license, GGUF, and llama.cpp provenance;

@@ -133,6 +133,17 @@ def test_too_many_tasks_is_rejected(tmp_path: Path, monkeypatch: MonkeyPatch) ->
             {"validators": [{"type": "json_schema", "schema": {"type": "made_up"}}]},
             "invalid Draft 2020-12",
         ),
+        (
+            {
+                "validators": [
+                    {
+                        "type": "json_schema",
+                        "schema": {"$ref": "https://example.invalid/schema.json"},
+                    }
+                ]
+            },
+            "external JSON Schema references",
+        ),
         ({"validators": [{"type": "regex_match", "pattern": "("}]}, "regular expression"),
     ],
 )

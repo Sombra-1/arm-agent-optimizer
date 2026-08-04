@@ -117,6 +117,7 @@ def execute_candidate(
     model_path: Path,
     workload_path: Path,
     screening_score: float | None,
+    deadline_monotonic: float | None = None,
 ) -> CandidateExecutionResult:
     runtime = profile.runtime
     if runtime.numa_mode != "disabled" or runtime.cpu_affinity_policy != "none":
@@ -158,7 +159,7 @@ def execute_candidate(
         overwrite=False,
         extra_environment={"AARCHTUNE_EVALUATION_RUN_LABEL": label},
     )
-    result = run_baseline(baseline_config)
+    result = run_baseline(baseline_config, deadline_monotonic=deadline_monotonic)
     manifest_data = json.loads((run_directory / "manifest.json").read_text())
     server_stopped = manifest_data.get("server_stopped") is True
     sampler_stopped = manifest_data.get("sampler_stopped") is True

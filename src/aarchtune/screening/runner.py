@@ -94,7 +94,16 @@ def _scenario_evidence(
     )
 
 
-def run_screening(config: ScreeningConfig) -> ScreeningRunResult:
+def run_screening(
+    config: ScreeningConfig,
+    *,
+    deadline_monotonic: float | None = None,
+) -> ScreeningRunResult:
+    deadline = (
+        deadline_monotonic
+        if deadline_monotonic is not None
+        else time.monotonic() + config.total_timeout_seconds
+    )
     plan_root = config.plan_dir.expanduser().resolve()
     plan = _load_plan(plan_root)
     if plan.summary.synthetic_fixture and not config.allow_synthetic:
@@ -233,7 +242,6 @@ def run_screening(config: ScreeningConfig) -> ScreeningRunResult:
         failure_count = 0
         all_processes_stopped = True
         all_samplers_stopped = True
-        started = time.monotonic()
         with ExitStack() as stack:
             signature_writer = stack.enter_context(
                 JsonlArtifactWriter(root / "bench-signatures.jsonl")
@@ -264,7 +272,8 @@ def run_screening(config: ScreeningConfig) -> ScreeningRunResult:
             signature_by_id = {signature.id: signature for signature in signatures}
             scenario_by_id = {scenario.id: scenario for scenario in scenario_source.scenarios}
             for entry in matrix:
-                if time.monotonic() - started >= config.total_timeout_seconds:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
                     failure_count += 1
                     failure_writer.append(
                         _failure(
@@ -286,7 +295,7 @@ def run_screening(config: ScreeningConfig) -> ScreeningRunResult:
                         stdout_path=stdout_path,
                         stderr_path=stderr_path,
                         samples_path=sample_path,
-                        timeout_seconds=config.invocation_timeout_seconds,
+                        timeout_seconds=min(config.invocation_timeout_seconds, remaining),
                         shutdown_timeout_seconds=config.shutdown_timeout_seconds,
                         sample_interval_seconds=config.sample_interval_seconds,
                         maximum_log_bytes=config.maximum_log_bytes,

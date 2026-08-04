@@ -1,0 +1,1 @@
+The reusable output is an Optimization Passport and evidence bundle. It binds hardware, runtime, model, workload, quality policy, candidate plan, drift checks, cleanup proof, and every selection decision. A deployment bundle is produced only when an eligible profile exists. Missing or incomplete evidence stays missing instead of becoming a convenient performance story.

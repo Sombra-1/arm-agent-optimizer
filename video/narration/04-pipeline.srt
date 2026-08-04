@@ -1,0 +1,12 @@
+1
+00:00:00,050 --> 00:00:03,930
+AArchTune replaces manual, speed-only tuning with a bounded pipeline.
+
+2
+00:00:03,930 --> 00:00:17,600
+It detects the hardware, records a fixed baseline, creates a deterministic candidate plan, deduplicates equivalent low-level signatures, screens candidates, evaluates the real workload, checks quality and temporal drift, and only then ranks eligible configurations.
+
+3
+00:00:17,600 --> 00:00:20,810
+Every decision remains attached to a hash-bound evidence trail.
+

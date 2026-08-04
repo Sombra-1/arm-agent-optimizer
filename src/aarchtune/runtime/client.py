@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from enum import StrEnum
 from typing import Any, cast
 
@@ -80,14 +81,27 @@ class LlamaServerClient:
         json_body: dict[str, Any] | None = None,
         require_json: bool = False,
     ) -> HttpResult:
-        timeout = timeout_seconds or self.request_timeout_seconds
+        timeout = timeout_seconds if timeout_seconds is not None else self.request_timeout_seconds
         try:
-            response = self._client.request(
-                method,
-                endpoint,
-                json=json_body,
-                timeout=httpx.Timeout(timeout),
-            )
+            with self._client.stream(
+                method, endpoint, json=json_body, timeout=httpx.Timeout(timeout)
+            ) as response:
+                status_code = response.status_code
+                maximum_bytes = self.maximum_response_characters * 4
+                raw_content = bytearray()
+                for chunk in response.iter_bytes():
+                    if len(raw_content) + len(chunk) > maximum_bytes:
+                        return HttpResult(
+                            succeeded=False,
+                            status_code=status_code,
+                            error_kind=ClientFailureKind.RESPONSE_TOO_LARGE,
+                            error=(
+                                "response_too_large: HTTP body exceeded the configured "
+                                "decoded response limit"
+                            ),
+                        )
+                    raw_content.extend(chunk)
+                text = bytes(raw_content).decode(response.encoding or "utf-8", errors="replace")
         except httpx.TimeoutException:
             return HttpResult(
                 succeeded=False,
@@ -107,18 +121,6 @@ class LlamaServerClient:
                 error=f"connection_failure: {exc}",
             )
 
-        status_code = response.status_code
-        raw_content = response.content
-        if len(raw_content) > self.maximum_response_characters * 4:
-            return HttpResult(
-                succeeded=False,
-                status_code=status_code,
-                error_kind=ClientFailureKind.RESPONSE_TOO_LARGE,
-                error=(
-                    "response_too_large: HTTP body exceeded the configured decoded response limit"
-                ),
-            )
-        text = response.text
         if len(text) > self.maximum_response_characters:
             return HttpResult(
                 succeeded=False,
@@ -129,7 +131,7 @@ class LlamaServerClient:
                     f"maximum is {self.maximum_response_characters}"
                 ),
             )
-        if not response.is_success:
+        if not 200 <= status_code < 300:
             kind = (
                 ClientFailureKind.SERVER_ERROR
                 if status_code >= 500
@@ -145,7 +147,7 @@ class LlamaServerClient:
         json_data: JsonValue = None
         if require_json:
             try:
-                json_data = cast(JsonValue, response.json())
+                json_data = cast(JsonValue, json.loads(text))
             except ValueError as exc:
                 return HttpResult(
                     succeeded=False,
@@ -169,7 +171,12 @@ class LlamaServerClient:
     def get_metrics(self) -> HttpResult:
         return self._request("GET", "/metrics")
 
-    def chat_completion_detailed(self, task: WorkloadTask) -> ChatCompletionResult:
+    def chat_completion_detailed(
+        self,
+        task: WorkloadTask,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> ChatCompletionResult:
         payload: dict[str, Any] = {
             "messages": [message.model_dump(mode="json") for message in task.messages],
             "temperature": task.generation.temperature,
@@ -182,6 +189,7 @@ class LlamaServerClient:
         result = self._request(
             "POST",
             "/v1/chat/completions",
+            timeout_seconds=timeout_seconds,
             json_body=payload,
             require_json=True,
         )
@@ -253,8 +261,13 @@ class LlamaServerClient:
             raw_json=result.json_data,
         )
 
-    def chat_completion(self, task: WorkloadTask) -> ResponseInput:
-        return self.chat_completion_detailed(task).response
+    def chat_completion(
+        self,
+        task: WorkloadTask,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> ResponseInput:
+        return self.chat_completion_detailed(task, timeout_seconds=timeout_seconds).response
 
 
 def execute_workload_task(client: LlamaServerClient, task: WorkloadTask) -> ResponseInput:

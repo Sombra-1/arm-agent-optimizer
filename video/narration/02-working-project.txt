@@ -1,0 +1,1 @@
+This is a working open-source project, not a benchmark mock-up. Its release gate now runs five hundred eighteen automated tests with ninety percent coverage, strict typing, lint and format checks, command-line validation, license checks, artifact checks, and secret scanning. Normal continuous integration repeats that gate on Python three point eleven and three point twelve.

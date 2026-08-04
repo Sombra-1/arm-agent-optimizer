@@ -1,0 +1,8 @@
+1
+00:00:00,050 --> 00:00:10,070
+AArchTune makes Arm inference optimization safer to automate: measure natively, validate the actual workload, preserve provenance, and deploy only when speed and correctness both survive.
+
+2
+00:00:10,070 --> 00:00:16,300
+The project, MIT license, validation report, and permanent native evidence are available in the public AArchTune repository.
+

@@ -1,0 +1,1 @@
+AArchTune makes Arm inference optimization safer to automate: measure natively, validate the actual workload, preserve provenance, and deploy only when speed and correctness both survive. The project, MIT license, validation report, and permanent native evidence are available in the public AArchTune repository.

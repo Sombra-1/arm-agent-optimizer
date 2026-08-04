@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
+from aarchtune.workload import validators
 from aarchtune.workload.schema import (
     MAX_RESPONSE_CHARACTERS,
     ResponseInput,
@@ -75,6 +77,19 @@ def test_json_schema_passes_and_reports_mismatch() -> None:
     assert failing.passed is False
     assert failing.path == "$.status"
     assert "Schema mismatch" in failing.reason
+
+
+def test_json_schema_allows_internal_references() -> None:
+    definition = {
+        "type": "json_schema",
+        "schema": {
+            "$defs": {"status": {"const": "ok"}},
+            "properties": {"status": {"$ref": "#/$defs/status"}},
+        },
+    }
+
+    assert _evaluate(definition, _response('{"status":"ok"}')).passed is True
+    assert _evaluate(definition, _response('{"status":"bad"}')).passed is False
 
 
 def test_required_fields_counts_null_as_present_and_missing_as_failure() -> None:
@@ -153,6 +168,20 @@ def test_regex_match_supports_allowlisted_flags() -> None:
 
     assert _evaluate(definition, _response("header\nSTATUS: OK\nfooter")).passed is True
     assert _evaluate(definition, _response("status: failed")).passed is False
+
+
+def test_expensive_validator_timeout_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    def slow_evaluation(*_args: object) -> ValidatorResult:
+        time.sleep(1)
+        raise AssertionError("unreachable")
+
+    monkeypatch.setattr(validators, "VALIDATOR_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(validators, "_evaluate_isolated", slow_evaluation)
+
+    result = _evaluate({"type": "regex_match", "pattern": "ok"}, _response("ok"))
+
+    assert result.passed is False
+    assert "safety limit" in result.reason
 
 
 def test_maximum_response_length_includes_boundary() -> None:
