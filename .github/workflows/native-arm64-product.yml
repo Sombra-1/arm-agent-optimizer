@@ -107,10 +107,18 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$MODEL_DIR"
-          curl --fail --location --retry 3 --retry-all-errors \
-            --connect-timeout 30 --max-time 1200 \
-            "https://huggingface.co/$MODEL_REPOSITORY/resolve/$MODEL_REVISION/$MODEL_FILENAME" \
-            --output "$MODEL_PATH"
+          downloaded=false
+          for attempt in 1 2 3; do
+            echo "Pinned model transfer attempt $attempt/3"
+            if curl --fail --location --continue-at - \
+              --connect-timeout 30 --max-time 600 --speed-limit 1048576 --speed-time 120 \
+              "https://huggingface.co/$MODEL_REPOSITORY/resolve/$MODEL_REVISION/$MODEL_FILENAME?download=true" \
+              --output "$MODEL_PATH"; then
+              downloaded=true
+              break
+            fi
+          done
+          [[ "$downloaded" == true ]]
           [[ "$(stat -c %s "$MODEL_PATH")" == "$MODEL_SIZE_BYTES" ]]
           echo "$MODEL_SHA256  $MODEL_PATH" | sha256sum --check -
       - name: Run controlled native experiment

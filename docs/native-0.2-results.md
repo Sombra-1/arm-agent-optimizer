@@ -67,3 +67,9 @@ preflight reports, and existing sanitized screening diagnostics when execution
 raises. A same-input diagnostic replay uses one repetition to identify the
 failure before spending compute on a repeatability run. Response text and
 arbitrary exception messages remain excluded.
+
+Diagnostic replay [43617257770](https://github.com/Sombra-1/arm-agent-optimizer/actions/runs/43617257770)
+remained in model transfer beyond a complete 20-minute request window and was
+replaced before inference. It establishes no additional quality or performance
+result. The download retry now resumes partial transfers, detects sustained low
+transfer speed, and still requires the exact immutable model size and SHA-256.
