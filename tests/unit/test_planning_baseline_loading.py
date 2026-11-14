@@ -256,19 +256,30 @@ def test_core_and_feature_difference_is_compatible_with_warning(
 
 
 def test_available_memory_difference_is_compatible_with_warning(
-    tmp_path: Path, fake_binary: Path, fake_model: Path
+    tmp_path: Path, fake_binary: Path, fake_model: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from aarchtune.optimization import compatibility
+
+    current_hardware = detect_hardware(model_path=fake_model)
+    monkeypatch.setattr(compatibility, "detect_hardware", lambda **_: current_hardware)
     baseline = _make_baseline(tmp_path / "memory-warning", fake_binary, fake_model)
+    stored_available = (current_hardware.memory_available_bytes or 0) + 4096
 
     def change_available_memory(data: dict[str, Any]) -> None:
-        current = data["data"]["memory_available_bytes"]
-        data["data"]["memory_available_bytes"] = (current or 0) + 4096
+        data["data"]["memory_available_bytes"] = stored_available
 
     _mutate(baseline / "hardware.json", change_available_memory)
     loaded = load_baseline_input(baseline, allow_synthetic=True, allow_runtime_change=False)
     assert loaded.baseline is not None
-    fields = {item.field for item in loaded.baseline.compatibility.differences}
-    assert "memory_available_bytes" in fields
+    difference = next(
+        item
+        for item in loaded.baseline.compatibility.differences
+        if item.field == "memory_available_bytes"
+    )
+    assert difference.baseline_value == stored_available
+    assert difference.current_value == current_hardware.memory_available_bytes
+    assert difference.severity == "warning"
+    assert loaded.baseline.compatibility.classification.value == "compatible_with_warnings"
 
 
 def test_architecture_mismatch_is_incompatible(
