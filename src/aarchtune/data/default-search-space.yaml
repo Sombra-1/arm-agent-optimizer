@@ -1,0 +1,26 @@
+schema_version: "1.0"
+
+limits:
+  minimum_profiles: 8
+  maximum_profiles: 24
+
+threads:
+  fractions_of_physical_cores: [0.25, 0.50, 0.75, 1.00]
+  include_baseline: true
+
+threads_batch:
+  fractions_of_physical_cores: [0.50, 1.00]
+  include_baseline: true
+  allow_greater_than_generation_threads: true
+
+batch_sizes: [128, 256, 512, 1024]
+ubatch_sizes: [64, 128, 256]
+parallel_slots: [1, 2, 4]
+prompt_cache: [false, true]
+mmap: [true, false]
+numa_modes: [disabled, distribute]
+enable_numa_experiments: false
+
+context:
+  policy: baseline
+  explicit_sizes: []

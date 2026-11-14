@@ -233,9 +233,19 @@ class WorkloadTask(WorkloadModel):
     description: NonEmptyString
     messages: Annotated[list[ChatMessage], Field(min_length=1, max_length=MAX_MESSAGES_PER_TASK)]
     generation: GenerationSettings
+    output_schema: dict[str, JsonValue] | None = None
     validators: Annotated[
         list[ValidatorDefinition], Field(min_length=1, max_length=MAX_VALIDATORS_PER_TASK)
     ]
+
+    @field_validator("output_schema")
+    @classmethod
+    def validate_output_schema(
+        cls, value: dict[str, JsonValue] | None
+    ) -> dict[str, JsonValue] | None:
+        if value is not None:
+            JsonSchemaDefinition(type=ValidatorType.JSON_SCHEMA, schema=value)
+        return value
 
     @field_validator("id", "category", "description")
     @classmethod

@@ -10,6 +10,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from aarchtune.optimization.models import OptimizationGoal
+from aarchtune.runtime.config import ResponseFormatMode
 
 
 class OrchestrationModel(BaseModel):
@@ -55,6 +56,7 @@ class OptimizeConfig(OrchestrationModel):
     baseline_repetitions: Annotated[int, Field(ge=1, le=100)] = 2
     evaluation_repetitions: Annotated[int, Field(ge=1, le=100)] = 3
     warmup_requests: Annotated[int, Field(ge=0, le=100)] = 1
+    response_format_mode: ResponseFormatMode = ResponseFormatMode.NONE
     advance_count: Annotated[int, Field(ge=1, le=24)] = 6
     max_profiles: Annotated[int, Field(ge=1, le=64)] | None = None
     screening_repetitions: Annotated[int, Field(ge=1, le=20)] = 3

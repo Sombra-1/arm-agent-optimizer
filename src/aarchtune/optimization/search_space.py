@@ -12,7 +12,7 @@ from pydantic import ValidationError
 from aarchtune.optimization.errors import SearchSpaceError
 from aarchtune.optimization.models import SearchSpaceConfig, SearchSpaceSource
 
-DEFAULT_SEARCH_SPACE = Path(__file__).resolve().parents[3] / "configs/default-search-space.yaml"
+DEFAULT_SEARCH_SPACE = Path(__file__).resolve().parents[1] / "data/default-search-space.yaml"
 MAX_SEARCH_SPACE_BYTES = 256 * 1024
 
 

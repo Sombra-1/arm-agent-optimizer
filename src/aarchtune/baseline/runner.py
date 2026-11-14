@@ -200,6 +200,12 @@ def run_baseline(
 
     capabilities, runtime_config = _preflight(config)
     workload = load_workload(config.workload_path)
+    if config.response_format_mode.value == "json_schema":
+        missing = [task.id for task in workload.tasks if task.output_schema is None]
+        if missing:
+            raise BaselineInputError(
+                "json_schema mode requires output_schema for every task: " + ", ".join(missing)
+            )
     output_dir = prepare_run_directory(config.output_dir, overwrite=config.overwrite)
     created_at = datetime.now(UTC)
     run_id = generate_run_id(created_at)
@@ -213,10 +219,8 @@ def run_baseline(
         warmup_success=[],
         measured_repetitions=config.repetitions,
         response_format_mode=config.response_format_mode,
-        response_format_applied=config.response_format_mode.value == "json_object",
-        response_format_type=(
-            "json_object" if config.response_format_mode.value == "json_object" else None
-        ),
+        response_format_applied=config.response_format_mode.response_type is not None,
+        response_format_type=config.response_format_mode.response_type,
         request_timeout_seconds=config.request_timeout_seconds,
         startup_timeout_seconds=config.startup_timeout_seconds,
         process_sampling_interval_seconds=config.sample_interval_seconds,

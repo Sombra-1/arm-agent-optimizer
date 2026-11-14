@@ -199,7 +199,17 @@ class Handler(BaseHTTPRequestHandler):
             REQUEST_COUNT += 1
             request_number = REQUEST_COUNT
         response_format = payload.get("response_format")
-        if response_format is not None and response_format != {"type": "json_object"}:
+        schema_format = (
+            isinstance(response_format, dict)
+            and response_format.get("type") == "json_schema"
+            and isinstance(response_format.get("json_schema"), dict)
+            and isinstance(response_format["json_schema"].get("schema"), dict)
+        )
+        if (
+            response_format is not None
+            and response_format != {"type": "json_object"}
+            and not schema_format
+        ):
             emit_json(self, 400, {"error": "unsupported response_format"})
             return
         if active == "response-format-unsupported" and response_format is not None:
@@ -259,7 +269,7 @@ class Handler(BaseHTTPRequestHandler):
         if active == "missing-content":
             emit_json(self, 200, {"choices": [{"message": {}}]})
             return
-        if evaluation_quality_failure(active, request_number):
+        if active == "malformed-completion" or evaluation_quality_failure(active, request_number):
             content = "not-json"
         elif active == "candidate-malformed-json" and evaluation_label().startswith("candidate-"):
             content = "{malformed"

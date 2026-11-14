@@ -12,7 +12,7 @@ from pydantic import ValidationError
 from aarchtune.screening.errors import ScenarioError
 from aarchtune.screening.models import LlamaBenchCapabilities, ScenarioSet, ScenarioSource
 
-DEFAULT_SCENARIOS = Path(__file__).resolve().parents[3] / "configs/default-screening-scenarios.yaml"
+DEFAULT_SCENARIOS = Path(__file__).resolve().parents[1] / "data/default-screening-scenarios.yaml"
 MAX_SCENARIO_BYTES = 128 * 1024
 
 

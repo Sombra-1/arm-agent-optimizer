@@ -50,7 +50,8 @@ class RequestDescription(BenchmarkModel):
     stream: Literal[False] = False
     response_format_mode: ResponseFormatMode = ResponseFormatMode.NONE
     response_format_applied: bool = False
-    response_format_type: Literal["json_object"] | None = None
+    response_format_type: Literal["json_object", "json_schema"] | None = None
+    response_format_schema: dict[str, JsonValue] | None = None
 
 
 class ExecutionResult(BenchmarkModel):

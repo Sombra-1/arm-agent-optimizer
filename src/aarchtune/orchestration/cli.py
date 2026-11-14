@@ -15,6 +15,7 @@ from aarchtune.optimization.models import OptimizationGoal
 from aarchtune.orchestration.models import OptimizeConfig
 from aarchtune.orchestration.runner import run_optimization
 from aarchtune.orchestration.validation import validate_optimization
+from aarchtune.runtime.config import ResponseFormatMode
 
 console = Console()
 optimize_app = typer.Typer(
@@ -45,6 +46,9 @@ def optimize_command(
         int, typer.Option("--evaluation-repetitions", min=1, max=100)
     ] = 3,
     warmup_requests: Annotated[int, typer.Option("--warmup-requests", min=0, max=100)] = 1,
+    response_format: Annotated[
+        ResponseFormatMode, typer.Option("--response-format")
+    ] = ResponseFormatMode.NONE,
     advance_count: Annotated[int, typer.Option("--advance-count", min=1, max=24)] = 6,
     max_profiles: Annotated[int | None, typer.Option("--max-profiles", min=1, max=64)] = None,
     screening_repetitions: Annotated[
@@ -99,6 +103,7 @@ def optimize_command(
         baseline_repetitions=baseline_repetitions,
         evaluation_repetitions=evaluation_repetitions,
         warmup_requests=warmup_requests,
+        response_format_mode=response_format,
         advance_count=advance_count,
         max_profiles=max_profiles,
         screening_repetitions=screening_repetitions,
@@ -120,7 +125,12 @@ def optimize_command(
     if json_output:
         typer.echo(json.dumps(result.model_dump(mode="json"), indent=2, sort_keys=True))
     else:
-        console.print("[bold green]AArchTune Optimization Complete[/bold green]\n")
+        if result.outcome in {"baseline_quality_failed", "baseline_evidence_incomplete"}:
+            console.print("[bold yellow]AArchTune Optimization Blocked[/bold yellow]\n")
+            console.print("Retain current configuration; no verified improvement.")
+            console.print(f"Diagnostic report: {result.output_dir / 'preflight/report.html'}")
+        else:
+            console.print("[bold green]AArchTune Optimization Complete[/bold green]\n")
         console.print(f"Outcome:             {result.outcome or result.status.value}")
         console.print(f"Selected profile:    {result.selected_profile_id or 'none'}")
         console.print(f"Stages reused:       {len(result.reused_stages)}")

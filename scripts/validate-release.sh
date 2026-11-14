@@ -14,7 +14,7 @@ cli_bin=${AARCHTUNE_BIN:-.venv/bin/aarchtune}
 "$ruff_bin" format --check .
 "$mypy_bin" src
 "$cli_bin" --help >/dev/null
-for command in doctor baseline plan screen evaluate optimize finalize passport; do
+for command in doctor preflight baseline plan screen evaluate optimize finalize passport; do
   "$cli_bin" "$command" --help >/dev/null
 done
 

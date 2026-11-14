@@ -1,10 +1,8 @@
 # AArchTune
 
-**Arm Create 2026 · Cloud AI Track**
-
 [![CI](https://github.com/Sombra-1/arm-agent-optimizer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Sombra-1/arm-agent-optimizer/actions/workflows/ci.yml)
 
-**Quality-gated GGUF optimization for native Arm64.**
+**Diagnose, benchmark, and tune local GGUF inference with quality gates.**
 
 Arm64-native · GGUF/llama.cpp · workload-aware quality gates · reproducible
 evidence · safe candidate selection
@@ -12,6 +10,13 @@ evidence · safe candidate selection
 AArchTune searches CPU inference configurations, measures real workload
 behavior, verifies evidence and provenance, and recommends a result only when
 performance and correctness both pass.
+
+The **0.2 development branch** starts with model quality: `aarchtune preflight`
+checks a baseline, explains failures, and exports a diagnostic report even when
+tuning cannot proceed. `optimize` now stops before searching if that baseline
+fails. Optional JSON Schema generation preserves the same output contract through
+candidate evaluation. See the [preflight guide](docs/preflight.md) for setup,
+starter workload creation, and the outstanding native demonstration milestone.
 
 > **Strongest validated result:** AArchTune completed a real 132-execution
 > native Arm64 optimization workflow and correctly retained no candidate
@@ -37,6 +42,8 @@ It refuses to convert faster-but-wrong measurements into a recommendation.
 
 - Detects Arm64 hardware, topology, memory, CPU capabilities, and runtime flags.
 - Measures a fixed real-workload baseline.
+- Diagnoses baseline quality and blocks expensive tuning when evidence or correctness fails.
+- Supports explicit per-task JSON Schema output while retaining independent validators.
 - Generates a deterministic, bounded, hardware-aware candidate plan.
 - Deduplicates low-level benchmark signatures before expensive evaluation.
 - Runs advanced candidates through isolated `llama-server` processes.
@@ -87,7 +94,9 @@ hardware.
 flowchart TD
     H[Hardware detection] --> R[Runtime discovery]
     R --> B[Baseline execution]
-    B --> C[Candidate generation]
+    B --> F{Baseline preflight}
+    F -- quality or evidence failed --> Z[Diagnostic report; retain current configuration]
+    F -- quality passed --> C[Candidate generation]
     C --> S[Screening]
     S --> N[Native measurement]
     N --> V[Quality validators]
@@ -273,12 +282,14 @@ Requirements: Python 3.11+, Linux CPU inference, a readable GGUF model, and
 compatible `llama-server`/`llama-bench` binaries for real optimization.
 
 ```bash
-python -m venv .venv
+scripts/setup.sh
 source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e '.[dev]'
 aarchtune --version
 ```
+
+Use `scripts/setup.sh --dev` to include test and lint tools. This sets up the
+Python CLI in the project environment; real inference still requires your local
+GGUF and llama.cpp binaries.
 
 ## CLI examples
 
@@ -292,6 +303,16 @@ Validate the workload:
 
 ```bash
 aarchtune workload validate workloads/smoke-test.jsonl --json
+```
+
+Create a starter workload and assess baseline quality:
+
+```bash
+aarchtune workload init --output my-workload.jsonl
+aarchtune preflight \
+  --binary LLAMA_SERVER --model MODEL_GGUF \
+  --workload my-workload.jsonl --response-format json_schema \
+  --output-dir results/preflight
 ```
 
 Run the full pipeline on an authorized local model:
@@ -330,14 +351,16 @@ ruff format --check .
 mypy src
 ```
 
-The release suite contains 518 automated tests with 90% aggregate coverage.
+The automated suite covers runtime management, workload validation, preflight
+diagnostics, candidate selection, artifact integrity, and workflow behavior.
 Normal CI validates Python 3.11 and 3.12. Synthetic fixtures are explicitly
 labelled and are product-behavior evidence, never native performance evidence.
 
 ## Submission status
 
-Experimental work is frozen. No full-performance recommendation or unsupported
-speedup claim is published. The final project and demo video are published on
+The original hackathon experiments remain frozen as historical evidence.
+No full-performance recommendation or unsupported speedup claim is published.
+The original project and demo video are published on
 [Devpost](https://devpost.com/software/aarchtune), and the video is also
 available directly on [YouTube](https://youtu.be/RemP5SKa0RM).
 
