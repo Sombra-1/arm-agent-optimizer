@@ -7,6 +7,7 @@ import argparse
 import json
 import platform
 import signal
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +15,7 @@ import httpx
 from collect_screening_diagnostics import Redactor
 
 from aarchtune.baseline.runner import hash_file_streaming
-from aarchtune.benchmark.models import RequestMeasurement
+from aarchtune.benchmark.models import RawAttemptRecord, RequestMeasurement
 from aarchtune.evaluation.quality_policy import load_quality_policy
 from aarchtune.finalization.models import ReportData
 from aarchtune.finalization.passport import verify_passport
@@ -155,6 +156,17 @@ def summarize_run(root: Path, redactor: Redactor, public: Path) -> dict[str, Any
                 "preflight/preflight.json",
             )
         },
+    }
+    locations: dict[str, Counter[str]] = defaultdict(Counter)
+    for line in (root / "baseline/raw-attempts.jsonl").read_text().splitlines():
+        record = RawAttemptRecord.model_validate_json(line)
+        for validator in record.validation.validator_results:
+            if not validator.passed:
+                locations[record.task_id][
+                    f"{validator.validator.value}:{validator.path or '$'}"
+                ] += 1
+    result["baseline_failed_validator_locations"] = {
+        task: dict(counts) for task, counts in locations.items()
     }
     if (root / "final/bundle-manifest.json").is_file():
         final = validate_bundle(root / "final")

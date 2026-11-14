@@ -15,6 +15,12 @@ builds the same pinned CPU runtime, verifies model size and SHA-256, and install
 AArchTune in a project-local virtual environment. No synthetic/native bypass is
 enabled in the experiment driver.
 
+`product_experiment=optimization` runs only B after A has been verified.
+`product_model=qwen2.5-14b-q3-k-m` selects the existing immutable 14B profile for a
+recorded model-only follow-up. The default B profile remains the original 7B
+choice; results from different models are not pooled. See
+[measured results](native-0.2-results.md).
+
 | Experiment | Model | Workload / output mode | Acceptance |
 | --- | --- | --- | --- |
 | A: rejection | Qwen2.5-1.5B-Instruct Q4_K_M | Original smoke workload / `none` | Quality rejection, confirmed cleanup, and no planning, screening, evaluation, or finalization artifacts |

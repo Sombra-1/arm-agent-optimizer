@@ -133,12 +133,11 @@ def test_native_workflow_is_pinned_bounded_and_uses_a_local_environment() -> Non
     assert job["timeout-minutes"] == 90
     assert job["strategy"]["fail-fast"] is False
     assert len(job["env"]["LLAMA_COMMIT"]) == 40
-    assert {item["experiment"] for item in job["strategy"]["matrix"]["include"]} == {
-        "rejection",
-        "optimization",
-    }
-    for model in job["strategy"]["matrix"]["include"]:
-        assert len(model["revision"]) == 40 and len(model["sha256"]) == 64
+    assert "rejection" in job["strategy"]["matrix"]["experiment"]
+    assert "optimization" in job["strategy"]["matrix"]["experiment"]
+    assert len(job["env"]["MODEL_REVISION"]) == 40
+    assert len(job["env"]["MODEL_SHA256"]) == 64
+    assert "scripts/quality_precheck.py resolve-profile" in workflow_path.read_text()
     assert ".venv/bin/python -m pip install" in workflow_path.read_text()
     parent = yaml.safe_load((ROOT / ".github/workflows/real-arm64-smoke.yml").read_text())
     assert (

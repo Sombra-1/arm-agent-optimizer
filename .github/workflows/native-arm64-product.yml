@@ -7,6 +7,12 @@ on:
         description: Full optimization searches on the same native runner
         type: string
         default: "2"
+      experiment:
+        type: string
+        default: both
+      model_profile:
+        type: string
+        default: qwen2.5-7b-q3-k-m
 
 permissions:
   contents: read
@@ -16,29 +22,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - experiment: rejection
-            repository: Qwen/Qwen2.5-1.5B-Instruct-GGUF
-            revision: 91cad51170dc346986eccefdc2dd33a9da36ead9
-            filename: qwen2.5-1.5b-instruct-q4_k_m.gguf
-            size: "1117320736"
-            sha256: 6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e
-          - experiment: optimization
-            repository: Qwen/Qwen2.5-7B-Instruct-GGUF
-            revision: 293ca9a10157b0e5fc5cb32af8b636a88bede891
-            filename: qwen2.5-7b-instruct-q3_k_m.gguf
-            size: "3808391072"
-            sha256: a96b16179dc6cc9afdf0cf7a96a80c199cbd00b9be207c3465be21cb721cca5e
+        experiment: ${{ fromJSON(inputs.experiment == 'both' && '["rejection","optimization"]' || format('["{0}"]', inputs.experiment)) }}
     name: ${{ matrix.experiment }}
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 90
     env:
       LLAMA_COMMIT: 1425386fd996511e1f3295e7366c38289a92a271
-      MODEL_REPOSITORY: ${{ matrix.repository }}
-      MODEL_REVISION: ${{ matrix.revision }}
-      MODEL_FILENAME: ${{ matrix.filename }}
-      MODEL_SIZE: ${{ matrix.size }}
-      MODEL_SHA256: ${{ matrix.sha256 }}
+      MODEL_REPOSITORY: Qwen/Qwen2.5-1.5B-Instruct-GGUF
+      MODEL_REVISION: 91cad51170dc346986eccefdc2dd33a9da36ead9
+      MODEL_FILENAME: qwen2.5-1.5b-instruct-q4_k_m.gguf
+      MODEL_SIZE_BYTES: "1117320736"
+      MODEL_SHA256: 6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e
+      MODEL_PROFILE: ${{ inputs.model_profile }}
       EXPERIMENT: ${{ matrix.experiment }}
       REPEATS: ${{ inputs.repeats }}
     steps:
@@ -72,6 +67,21 @@ jobs:
           sudo apt-get install --no-install-recommends -y build-essential cmake ninja-build curl git
           python -m venv .venv
           .venv/bin/python -m pip install -e .
+      - name: Resolve allowlisted optimization model
+        if: matrix.experiment == 'optimization'
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$MODEL_PROFILE" in
+            qwen2.5-7b-q3-k-m|qwen2.5-14b-q3-k-m) ;;
+            *) echo 'Unsupported optimization model profile' >&2; exit 1 ;;
+          esac
+          .venv/bin/python scripts/quality_precheck.py resolve-profile \
+            --profile "$MODEL_PROFILE" > "$RUNNER_TEMP/product-model.env"
+          cat "$RUNNER_TEMP/product-model.env" >> "$GITHUB_ENV"
+          filename=$(sed -n 's/^MODEL_FILENAME=//p' "$RUNNER_TEMP/product-model.env")
+          [[ -n "$filename" ]]
+          echo "MODEL_PATH=$MODEL_DIR/$filename" >> "$GITHUB_ENV"
       - name: Build pinned native CPU runtime
         shell: bash
         run: |
@@ -101,7 +111,7 @@ jobs:
             --connect-timeout 30 --max-time 1200 \
             "https://huggingface.co/$MODEL_REPOSITORY/resolve/$MODEL_REVISION/$MODEL_FILENAME" \
             --output "$MODEL_PATH"
-          [[ "$(stat -c %s "$MODEL_PATH")" == "$MODEL_SIZE" ]]
+          [[ "$(stat -c %s "$MODEL_PATH")" == "$MODEL_SIZE_BYTES" ]]
           echo "$MODEL_SHA256  $MODEL_PATH" | sha256sum --check -
       - name: Run controlled native experiment
         id: native

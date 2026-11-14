@@ -18,6 +18,18 @@ on:
         default: "2"
         type: choice
         options: ["1", "2"]
+      product_experiment:
+        description: Product experiment to run
+        required: true
+        default: both
+        type: choice
+        options: [both, rejection, optimization]
+      product_model:
+        description: Immutable model profile for the optimization experiment
+        required: true
+        default: qwen2.5-7b-q3-k-m
+        type: choice
+        options: [qwen2.5-7b-q3-k-m, qwen2.5-14b-q3-k-m]
 
 permissions:
   contents: read
@@ -778,3 +790,5 @@ jobs:
     uses: ./.github/workflows/native-arm64-product.yml
     with:
       repeats: ${{ inputs.product_repeats || '2' }}
+      experiment: ${{ inputs.product_experiment || 'both' }}
+      model_profile: ${{ inputs.product_model || 'qwen2.5-7b-q3-k-m' }}
