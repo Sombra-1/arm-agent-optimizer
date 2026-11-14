@@ -1,0 +1,187 @@
+name: Native Arm64 Product Experiments
+
+on:
+  workflow_call:
+    inputs:
+      repeats:
+        description: Full optimization searches on the same native runner
+        type: string
+        default: "2"
+
+permissions:
+  contents: read
+
+jobs:
+  experiment:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - experiment: rejection
+            repository: Qwen/Qwen2.5-1.5B-Instruct-GGUF
+            revision: 91cad51170dc346986eccefdc2dd33a9da36ead9
+            filename: qwen2.5-1.5b-instruct-q4_k_m.gguf
+            size: "1117320736"
+            sha256: 6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e
+          - experiment: optimization
+            repository: Qwen/Qwen2.5-7B-Instruct-GGUF
+            revision: 293ca9a10157b0e5fc5cb32af8b636a88bede891
+            filename: qwen2.5-7b-instruct-q3_k_m.gguf
+            size: "3808391072"
+            sha256: a96b16179dc6cc9afdf0cf7a96a80c199cbd00b9be207c3465be21cb721cca5e
+    name: ${{ matrix.experiment }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    env:
+      LLAMA_COMMIT: 1425386fd996511e1f3295e7366c38289a92a271
+      MODEL_REPOSITORY: ${{ matrix.repository }}
+      MODEL_REVISION: ${{ matrix.revision }}
+      MODEL_FILENAME: ${{ matrix.filename }}
+      MODEL_SIZE: ${{ matrix.size }}
+      MODEL_SHA256: ${{ matrix.sha256 }}
+      EXPERIMENT: ${{ matrix.experiment }}
+      REPEATS: ${{ inputs.repeats }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Prove native Arm64 and initialize paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(uname -s)" == Linux ]]
+          [[ "$(uname -m)" == aarch64 ]]
+          [[ "$REPEATS" == 1 || "$REPEATS" == 2 ]]
+          {
+            echo "LLAMA_SOURCE_DIR=$RUNNER_TEMP/llama.cpp"
+            echo "LLAMA_BUILD_DIR=$RUNNER_TEMP/llama.cpp-build"
+            echo "MODEL_DIR=$RUNNER_TEMP/product-model"
+            echo "MODEL_PATH=$RUNNER_TEMP/product-model/$MODEL_FILENAME"
+            echo "PRIVATE_RUNS=$RUNNER_TEMP/product-runs"
+            echo "PUBLIC_EVIDENCE=$RUNNER_TEMP/product-evidence"
+          } >> "$GITHUB_ENV"
+      - name: Install dependencies in a project environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y build-essential cmake ninja-build curl git
+          python -m venv .venv
+          .venv/bin/python -m pip install -e .
+      - name: Build pinned native CPU runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init "$LLAMA_SOURCE_DIR"
+          git -C "$LLAMA_SOURCE_DIR" remote add upstream https://github.com/ggml-org/llama.cpp.git
+          git -C "$LLAMA_SOURCE_DIR" fetch --depth 1 upstream "$LLAMA_COMMIT"
+          git -C "$LLAMA_SOURCE_DIR" checkout --detach FETCH_HEAD
+          [[ "$(git -C "$LLAMA_SOURCE_DIR" rev-parse HEAD)" == "$LLAMA_COMMIT" ]]
+          cmake -S "$LLAMA_SOURCE_DIR" -B "$LLAMA_BUILD_DIR" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DGGML_CPU=ON -DGGML_NATIVE=ON \
+            -DGGML_CPU_KLEIDIAI=ON -DGGML_CUDA=OFF -DGGML_VULKAN=OFF \
+            -DGGML_METAL=OFF -DGGML_RPC=OFF -DLLAMA_BUILD_TESTS=OFF \
+            -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_TOOLS=ON -DLLAMA_BUILD_SERVER=ON \
+            -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF -DLLAMA_BUILD_APP=OFF \
+            > "$RUNNER_TEMP/cmake-configure.log" 2>&1
+          cmake --build "$LLAMA_BUILD_DIR" --target llama-server llama-bench \
+            --parallel "$(nproc)" > "$RUNNER_TEMP/cmake-build.log" 2>&1
+          "$LLAMA_BUILD_DIR/bin/llama-server" --version > "$RUNNER_TEMP/runtime-version.txt" 2>&1
+          grep -Fq "${LLAMA_COMMIT:0:7}" "$RUNNER_TEMP/runtime-version.txt"
+      - name: Download and verify immutable model
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$MODEL_DIR"
+          curl --fail --location --retry 3 --retry-all-errors \
+            --connect-timeout 30 --max-time 1200 \
+            "https://huggingface.co/$MODEL_REPOSITORY/resolve/$MODEL_REVISION/$MODEL_FILENAME" \
+            --output "$MODEL_PATH"
+          [[ "$(stat -c %s "$MODEL_PATH")" == "$MODEL_SIZE" ]]
+          echo "$MODEL_SHA256  $MODEL_PATH" | sha256sum --check -
+      - name: Run controlled native experiment
+        id: native
+        shell: bash
+        run: |
+          set -euo pipefail
+          .venv/bin/python scripts/native_product_validation.py \
+            --experiment "$EXPERIMENT" --repeats "$REPEATS" \
+            --server "$LLAMA_BUILD_DIR/bin/llama-server" \
+            --bench "$LLAMA_BUILD_DIR/bin/llama-bench" \
+            --model "$MODEL_PATH" --expected-model-sha256 "$MODEL_SHA256" \
+            --output-dir "$PRIVATE_RUNS" --evidence-dir "$PUBLIC_EVIDENCE"
+      - name: Preserve provenance and stop workflow-owned processes
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$PUBLIC_EVIDENCE"
+          python - <<'PY'
+          import json, os, platform, subprocess
+          from pathlib import Path
+          data = {
+              "commit": os.environ["GITHUB_SHA"], "llama_commit": os.environ["LLAMA_COMMIT"],
+              "experiment": os.environ["EXPERIMENT"], "architecture": platform.machine(),
+              "model_repository": os.environ["MODEL_REPOSITORY"],
+              "model_revision": os.environ["MODEL_REVISION"],
+              "model_filename": os.environ["MODEL_FILENAME"],
+              "model_sha256": os.environ["MODEL_SHA256"], "model_license": "Apache-2.0",
+              "logical_cpus": os.cpu_count(),
+              "lscpu": subprocess.run(["lscpu", "--json"], capture_output=True, text=True).stdout,
+          }
+          Path(os.environ["PUBLIC_EVIDENCE"], "provenance.json").write_text(json.dumps(data, indent=2)+"\n")
+          PY
+          if [[ -x .venv/bin/python ]]; then
+            .venv/bin/python - <<'PY'
+          import os
+          from pathlib import Path
+          import psutil
+          directory = Path(os.environ["LLAMA_BUILD_DIR"], "bin")
+          owned = []
+          for process in psutil.process_iter(["exe"]):
+              executable = process.info["exe"]
+              if executable and Path(executable).parent == directory and Path(executable).name in {"llama-server", "llama-bench"}:
+                  process.terminate()
+                  owned.append(process)
+          _, alive = psutil.wait_procs(owned, timeout=10)
+          for process in alive:
+              process.kill()
+          PY
+          fi
+          rm -f -- "$MODEL_PATH"
+          [[ ! -e "$MODEL_PATH" ]]
+      - name: Scan response-free public evidence and summarize
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -RIEq '/home/runner/|/home/ayx/|/tmp/|raw_response|response_text|response_body|BEGIN PRIVATE KEY|ghp_|github_pat_' "$PUBLIC_EVIDENCE"; then
+            echo 'Public evidence scan failed; withholding artifact.' >&2
+            exit 1
+          fi
+          echo 'PUBLIC_SCAN_PASSED=true' >> "$GITHUB_ENV"
+          if [[ -f "$PUBLIC_EVIDENCE/experiment.json" ]]; then
+            python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json, os
+          from pathlib import Path
+          evidence = json.loads(Path(os.environ["PUBLIC_EVIDENCE"], "experiment.json").read_text())
+          print(f"## Native Arm64 {evidence['experiment']}")
+          print(f"Acceptance passed: {evidence['passed']}")
+          for index, run in enumerate(evidence['runs'], 1):
+              print(f"- Run {index}: {run['outcome']}; preflight {run['preflight_outcome']}; request audit {run['request_audit']['passed']}")
+          for error in evidence['errors']:
+              print(f"- {error}")
+          print("Shared hosted runner; all results retained, no quality thresholds changed.")
+          PY
+          fi
+      - uses: actions/upload-artifact@v7
+        if: always() && env.PUBLIC_SCAN_PASSED == 'true'
+        with:
+          name: aarchtune-0.2-native-${{ matrix.experiment }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.PUBLIC_EVIDENCE }}
+          retention-days: 30
+          if-no-files-found: error

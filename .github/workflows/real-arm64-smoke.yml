@@ -11,6 +11,13 @@ on:
         options:
           - preflight
           - smoke
+          - product-validation
+      product_repeats:
+        description: Independent full searches on the same hosted Arm runner
+        required: true
+        default: "2"
+        type: choice
+        options: ["1", "2"]
 
 permissions:
   contents: read
@@ -21,6 +28,7 @@ concurrency:
 
 jobs:
   native-arm64:
+    if: inputs.mode != 'product-validation'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 120
     env:
@@ -764,3 +772,9 @@ jobs:
         run: |
           set -euo pipefail
           exit "${OPTIMIZE_EXIT:-1}"
+
+  product-validation:
+    if: inputs.mode == 'product-validation'
+    uses: ./.github/workflows/native-arm64-product.yml
+    with:
+      repeats: ${{ inputs.product_repeats || '2' }}

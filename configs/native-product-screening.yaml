@@ -1,0 +1,10 @@
+schema_version: "1.0"
+scenarios:
+  - id: prefill
+    prompt_tokens: 128
+    generation_tokens: 0
+    required: true
+  - id: decode
+    prompt_tokens: 0
+    generation_tokens: 32
+    required: true

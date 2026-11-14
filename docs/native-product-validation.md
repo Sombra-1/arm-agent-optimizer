@@ -1,0 +1,59 @@
+# Controlled native Arm64 experiments for 0.2
+
+The `feature/aarchtune-0.2` branch uses the existing manual native workflow to
+run two separate experiments on `ubuntu-24.04-arm`. Main is unchanged. Dispatch:
+
+```bash
+gh workflow run real-arm64-smoke.yml \
+  --ref feature/aarchtune-0.2 \
+  -f mode=product-validation -f product_repeats=2
+```
+
+The product mode calls `native-arm64-product.yml`; the older `preflight` and
+`smoke` modes remain available. Each matrix job proves native Linux AArch64,
+builds the same pinned CPU runtime, verifies model size and SHA-256, and installs
+AArchTune in a project-local virtual environment. No synthetic/native bypass is
+enabled in the experiment driver.
+
+| Experiment | Model | Workload / output mode | Acceptance |
+| --- | --- | --- | --- |
+| A: rejection | Qwen2.5-1.5B-Instruct Q4_K_M | Original smoke workload / `none` | Quality rejection, confirmed cleanup, and no planning, screening, evaluation, or finalization artifacts |
+| B: full pipeline | Qwen2.5-7B-Instruct Q3_K_M | Support-triage starter / `json_schema` | All six stages complete; native evidence, final bundle, and passport validate; selection is a passing candidate or retained baseline |
+
+The runtime pin is `1425386fd996511e1f3295e7366c38289a92a271` (`b10106`). The
+immutable model revisions, sizes, and digests are recorded in the workflow and
+public provenance. Model B reuses the existing verified 7B model profile.
+
+Experiment B performs single-task protocol probes in `none`, `json_object`, and
+`json_schema` modes before the full workload run. It also sends an unknown format
+directly to the native server and requires HTTP 400 or 422. These probes are
+protocol checks, not workload-level quality results. The full search uses the
+same JSON Schema contract throughout; every measured request is checked against
+its task's temperature, seed, token limit, streaming setting, output mode, and
+generation schema.
+
+The default quality policy is unchanged. Baseline measurement uses two
+repetitions and candidate evaluation uses three. Each search is bounded to eight
+planned profiles, four advanced profiles, and 30 minutes total. Screening uses
+the fixed, short prefill/decode scenarios in `configs/native-product-screening.yaml`.
+Both hosted jobs have a 90-minute timeout. Experiment A runs once; B runs twice
+by default on the same runner. All attempts and outcomes are retained in order.
+
+If B's baseline fails, the search stops and the experiment fails its full-pipeline
+acceptance criterion. If a passing baseline is retained, the experiment may pass
+without establishing a speedup. No quality threshold, expected answer, or
+selection-improvement threshold is relaxed to obtain a positive result.
+
+The repeated-run summary reports shared-candidate quality decisions, changes in
+candidate membership, and the observed range of baseline P95 latency. These are
+descriptive results from a shared hosted runner, not confidence intervals or
+evidence from independent hosts. Per-run drift checks still apply unchanged.
+
+Artifacts named `aarchtune-0.2-native-{rejection,optimization}-RUN-ATTEMPT` contain
+response-free projections, diagnostic/final reports when available, actual
+hardware and source/model provenance, request-audit results, and original
+artifact hashes. Original bundles and passports are validated **before**
+projection and path redaction. The public projections do not replace the
+original canonical evidence and should not be passed to bundle/passport
+validators. Model weights, generated responses, and server logs are excluded.
+Artifacts are uploaded only after the public-evidence scan passes.
