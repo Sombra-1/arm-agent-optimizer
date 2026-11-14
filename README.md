@@ -19,8 +19,8 @@ candidate evaluation. See the [preflight guide](docs/preflight.md) for setup,
 starter workload creation, and [measured 0.2 native results](docs/native-0.2-results.md).
 
 > **0.2 native result:** Preflight rejected the original poor-quality baseline
-> before search. A separate quality-passing 14B support-triage run completed all
-> six stages and produced a verified `baseline_retained` result.
+> before search. Two quality-passing 14B support-triage runs completed all
+> six stages and produced verified `baseline_retained` results.
 
 Both evaluated configurations passed every quality check, but no alternative
 met the unchanged 2% improvement threshold. No runtime speedup is claimed.
@@ -176,9 +176,11 @@ retained; drift checks, request-generation audit, final bundle, Passport, and
 cleanup verification passed. Screening finished with partial status: four
 planned profiles became three low-level signatures and two evaluated profiles.
 
-These are bounded native validation results, not evidence of a tuning speedup.
-An unchanged repeat is pending. See [all attempts, limitations, and permanent
-evidence](docs/native-0.2-results.md).
+An [unchanged repeat](https://github.com/Sombra-1/arm-agent-optimizer/actions/runs/43638354390)
+produced the same evaluated profiles, passing quality decisions, and retained
+baseline. Evaluated-baseline P95 differed by about 0.40% between runs. These are
+two bounded native validations, not a tuning speedup or statistical confidence.
+See [all attempts, limitations, and permanent evidence](docs/native-0.2-results.md).
 
 ### Original native optimization smoke
 
@@ -270,7 +272,7 @@ See [security](docs/security.md), [runtime safety](docs/runtime-safety.md), and
 ## Current limitations
 
 - Native results come from an ephemeral shared runner, not a dedicated benchmark host.
-- The 0.2 full-pipeline comparison has one successful run; repeatability is pending.
+- Two 0.2 searches repeated quality and retention decisions; broader repeatability remains unproven.
 - The original smoke workload failed quality; the 14B support-triage pairing passed.
 - Mistral quality could not be measured because the hosted runner was lost.
 - KleidiAI build integration is proven; the tested Q4_K tensors had no

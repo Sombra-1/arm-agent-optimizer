@@ -3,10 +3,13 @@
 These are measured results from native GitHub-hosted Arm64, kept separately from
 the original hackathon evidence. No quality policy or workload answer was changed.
 
-The 0.2 native milestones now include early quality rejection and one verified
-full-pipeline comparison with a quality-passing baseline. The comparison retained
-the baseline; **no runtime-configuration speedup is established**. An unchanged
-repeat is running separately; repeatability is not yet established.
+The 0.2 native milestones now include early quality rejection and two verified
+full-pipeline comparisons with a quality-passing baseline. Both retained the
+baseline; **no runtime-configuration speedup is established**. The two bounded
+searches had identical evaluated profiles and quality decisions, stable within-run
+drift, and a 0.40% relative range in evaluated-baseline P95. This is limited
+repeatability evidence from two hosted workflow runs, not statistical confidence
+or validation across independent hardware platforms.
 
 ## Run 43614303062: rejection and first optimization-model preflight
 
@@ -166,6 +169,45 @@ benchmark, or a production performance guarantee.
 - [Python 3.11/3.12 CI](https://github.com/Sombra-1/arm-agent-optimizer/actions/runs/43622255201)
   passed for the exact source commit; local release checks passed with 555 tests.
 
-[Run 43638354390](https://github.com/Sombra-1/arm-agent-optimizer/actions/runs/43638354390)
-repeats the same source and inputs on a separate hosted runner. Its result will
-be recorded independently before making any repeatability claim.
+## Run 43638354390: unchanged repeat, same quality and retention decisions
+
+[Repeat run](https://github.com/Sombra-1/arm-agent-optimizer/actions/runs/43638354390)
+used the exact same source commit `5cbd233f9bb2409e9d82cb689daf3616f7c04630`, model,
+workload, runtime binary digests, policy, context/slot limits, and search bounds.
+It was a separate hosted workflow job with the same visible four-core Neoverse-N2
+hardware configuration. Physical-host independence is not established.
+
+All six stages, optimization evidence, original final bundle, Passport, process
+cleanup, and the 50-request generation audit passed again. The initial baseline
+passed 10/10 tasks and 70/70 validators; both evaluated profiles passed 10/10 tasks
+with 100% JSON validity and validator success. All three protocol probes passed,
+and the unknown output mode returned HTTP 400. Baseline drift remained stable:
+median latency moved about 0.45%, P95 about 1.51%, and quality did not change.
+
+| Run | Baseline median | Baseline P95 | Cache candidate P95 | Quality-passing profiles | Selection |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `43622255530` | 13.831 s | 14.581 s | 14.665 s | 2/2 | baseline retained |
+| `43638354390` | 13.839 s | 14.639 s | 14.613 s | 2/2 | baseline retained |
+
+The evaluated profile hashes were identical across runs, and both profiles'
+quality decisions agreed. The evaluated baseline's P95 relative range was
+`(14.639019423 - 14.581027603) / 14.581027603`, approximately **0.40%**.
+The cache candidate was about 0.18% faster than the evaluated baseline in the
+repeat, reversing the small ordering difference in the first run. Relative to
+the fresh start sentinel, the best observed P95 improvement was approximately
+1.59%, still below the unchanged 2% selection threshold. Retention was correct
+in both runs; there is no verified configuration improvement.
+
+Screening again had partial status with the same four-profile, three-signature,
+two-evaluation funnel. The individual screening exclusion/error reasons are
+absent from both public projections. Repetition does not remove that coverage
+and diagnostic limitation. Two short searches on shared hosted infrastructure
+also do not establish confidence intervals, production reliability, concurrent
+serving behavior, or performance on other Arm systems.
+
+- [Repeat archive](evidence/aarchtune-0.2-optimization-43638354390-1.zip)
+  ([checksum](evidence/aarchtune-0.2-optimization-43638354390-1.sha256))
+- Artifact ID: `14131843968`; original ZIP SHA-256:
+  `a7980a7135f53ca1678ef2d1c6a0a18962521b7f5a077f2c8897ad6a61fc47f5`.
+- [Python 3.11/3.12 CI for the report correction](https://github.com/Sombra-1/arm-agent-optimizer/actions/runs/43639012372)
+  passed on commit `3a0e409687f32363b723946a513ac49fa9fc6309`.

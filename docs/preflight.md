@@ -117,9 +117,10 @@ mode and per-task schema: launching the server alone does not enforce them.
 ## Native validation and performance claims
 
 The 0.2 native experiments establish early rejection and a verified, quality-passing
-full-pipeline comparison. That comparison retained the baseline and establishes
-no configuration speedup. Independent repetition remains pending; see the
-[measured results and evidence](native-0.2-results.md).
+full-pipeline comparison. An unchanged second search repeated the passing quality
+and baseline-retention decisions, with about 0.40% evaluated-baseline P95 variation.
+Neither run establishes a configuration speedup. See the
+[measured results, scope limits, and evidence](native-0.2-results.md).
 
 On native Linux Arm64, use the prepared script with an already available local
 model and binaries:
