@@ -10,7 +10,9 @@ import typer
 from rich.console import Console
 
 from aarchtune.errors import AArchTuneError
+from aarchtune.screening.diagnostics import diagnose_screening
 from aarchtune.screening.models import ScreeningConfig
+from aarchtune.screening.report import write_screening_report
 from aarchtune.screening.runner import run_screening
 from aarchtune.screening.validation import validate_screening_directory
 
@@ -104,6 +106,7 @@ def screen_command(
         console.print("\nArtifacts:")
         console.print(f"  {result.output_dir / 'screening-summary.json'}")
         console.print(f"  {result.output_dir / 'advanced-candidates.jsonl'}")
+        console.print(f"  {result.output_dir / 'screening-report.html'}")
     if result.exit_code:
         raise typer.Exit(code=result.exit_code)
 
@@ -131,3 +134,39 @@ def validate_command(
             console.print(f"  {error}")
     if not result.valid:
         raise typer.Exit(code=1)
+
+
+@screen_app.command("diagnose")
+def diagnose_command(
+    screening_dir: Annotated[Path, typer.Argument(help="Existing screening artifact directory.")],
+    output_dir: Annotated[Path | None, typer.Option("--output-dir")] = None,
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Explain screening decisions and coverage offline, including incomplete runs."""
+
+    try:
+        report = diagnose_screening(screening_dir)
+        if output_dir is not None:
+            write_screening_report(report, output_dir)
+    except (OSError, ValueError) as exc:
+        typer.echo(f"Cannot write screening diagnosis ({type(exc).__name__})", err=True)
+        raise typer.Exit(code=1) from exc
+    if json_output:
+        typer.echo(report.model_dump_json(indent=2))
+    else:
+        console.print("AArchTune Screening Diagnosis", style="bold")
+        for name, count in report.coverage.items():
+            console.print(f"{name}: {count if count is not None else 'unavailable'}", markup=False)
+        for candidate in report.candidates:
+            console.print(
+                f"{candidate['id']}: {candidate['decision']} ({candidate['reason_code']}); "
+                f"signature failures: {candidate['failure_codes']}",
+                markup=False,
+            )
+        for message in [*report.evidence_errors, *report.next_steps]:
+            console.print(message, markup=False)
+        if output_dir:
+            console.print(str(output_dir / "screening-report.html"), markup=False)
+        console.print("Metadata diagnosis only; no new benchmark or quality evaluation.")
+    if report.evidence_errors:
+        raise typer.Exit(code=3)

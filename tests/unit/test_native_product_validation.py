@@ -66,6 +66,14 @@ def test_public_projection_excludes_responses_and_rejects_synthetic_native_claim
             assert "response_text" not in path.read_text()
             assert str(tmp_path) not in path.read_text()
     assert (public / "report.html").is_file()
+    diagnostics = public / "screening-diagnostics"
+    assert (diagnostics / "advancement-decisions.jsonl").is_file()
+    assert (diagnostics / "failures.jsonl").is_file()
+    assert (diagnostics / "screening-report.html").is_file()
+    diagnosis = json.loads((diagnostics / "screening-diagnostics.json").read_text())
+    assert len(diagnosis["candidates"]) == 4
+    assert not diagnosis["evidence_errors"]
+    assert result["screening_diagnostics"]["included"]
 
 
 def test_request_audit_detects_changed_candidate_generation(

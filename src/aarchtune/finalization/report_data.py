@@ -11,6 +11,7 @@ from pydantic import JsonValue
 from aarchtune.evaluation.models import QualityGateStatus
 from aarchtune.finalization.context import FinalizationContext
 from aarchtune.finalization.models import OptimizationPassport, ParetoFrontier, ReportData
+from aarchtune.screening.diagnostics import diagnose_screening
 
 
 def _improvements(context: FinalizationContext) -> dict[str, JsonValue]:
@@ -131,6 +132,9 @@ def create_report_data(
             "real_workload_evaluated": len(context.results),
             "quality_passed": context.summary.quality_passed,
         },
+        screening_diagnostics=diagnose_screening(
+            context.screening_root, evaluated=context.results
+        ).model_dump(mode="json"),
         candidates=candidates,
         pareto=pareto,
         quality_policy=cast(dict[str, JsonValue], context.policy.policy.model_dump(mode="json")),

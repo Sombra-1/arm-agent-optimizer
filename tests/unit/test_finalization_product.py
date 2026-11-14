@@ -29,6 +29,7 @@ from aarchtune.finalization.validation import validate_bundle
 from aarchtune.optimization.models import OptimizationGoal
 from aarchtune.optimization.planner import create_search_plan
 from aarchtune.screening.capabilities import clear_bench_capability_cache
+from aarchtune.screening.diagnostics import diagnose_screening
 from aarchtune.screening.models import ScreeningConfig
 from aarchtune.screening.runner import run_screening
 
@@ -266,6 +267,12 @@ def test_report_rendering_is_deterministic(final_bundle: Path) -> None:
     assert render_report(data) == render_report(data)
     assert "Selected profile quality by category" in render_report(data)
     assert "Selected profile quality by validator" in render_report(data)
+    assert "Screening decisions and coverage" in render_report(data)
+    assert data.screening_diagnostics is not None
+    assert data.screening_diagnostics["coverage"]["workload_completed_profiles"] == len(
+        data.candidates
+    )
+    assert not data.screening_diagnostics["evidence_errors"]
 
 
 def test_retained_baseline_has_no_configuration_improvement(
@@ -287,6 +294,24 @@ def test_retained_baseline_has_no_configuration_improvement(
     )
     assert data.hero["improvements"] == {}
     assert data.candidates  # Actual measurements remain available for comparison.
+
+
+def test_screening_coverage_rejects_mismatched_workload_results(selected_evaluation: Path) -> None:
+    context = load_finalization_context(selected_evaluation, allow_synthetic=True)
+    wrong_result = context.results[0].model_copy(update={"candidate_hash": "0" * 64})
+    diagnosis = diagnose_screening(context.screening_root, evaluated=[wrong_result])
+    assert diagnosis.evidence_errors
+    assert diagnosis.coverage["workload_completed_profiles"] is None
+    assert diagnosis.coverage["workload_completed_fraction"] is None
+
+
+def test_older_report_does_not_invent_screening_reasons(final_bundle: Path) -> None:
+    payload = json.loads((final_bundle / "report-data.json").read_text())
+    del payload["screening_diagnostics"]
+    data = ReportData.model_validate_json(json.dumps(payload))
+    report = render_report(data)
+    assert "Detailed screening decisions are unavailable in this older report" in report
+    assert "Candidate P95 latency" in report
 
 
 @pytest.mark.parametrize(

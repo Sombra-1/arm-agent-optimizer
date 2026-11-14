@@ -171,6 +171,12 @@ def summarize_run(root: Path, redactor: Redactor, public: Path) -> dict[str, Any
     result["baseline_failed_validator_locations"] = {
         task: dict(counts) for task, counts in locations.items()
     }
+    if (root / "screening").is_dir():
+        collect_diagnostics(optimize_dir=root, evidence_dir=public, redactor=redactor)
+        result["screening_diagnostics"] = {
+            "included": True,
+            "path": "screening-diagnostics/screening-diagnostics.json",
+        }
     if (root / "final/bundle-manifest.json").is_file():
         final = validate_bundle(root / "final")
         passport = verify_passport(root / "final/optimization-passport.json")

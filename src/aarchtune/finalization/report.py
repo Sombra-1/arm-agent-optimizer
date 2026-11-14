@@ -8,6 +8,8 @@ from string import Template
 from typing import Any
 
 from aarchtune.finalization.models import ReportData
+from aarchtune.screening.diagnostics import ScreeningDiagnosis
+from aarchtune.screening.report import render_screening_details
 
 TEMPLATE_ROOT = Path(__file__).resolve().parents[1] / "templates"
 
@@ -259,6 +261,11 @@ def render_report(data: ReportData) -> str:
         selection_reason=html.escape(str(data.hero.get("selection_reason", ""))),
         selected_candidate=html.escape(selected),
         performance_metrics=performance_metrics,
+        screening_diagnostics=(
+            render_screening_details(ScreeningDiagnosis.model_validate(data.screening_diagnostics))
+            if data.screening_diagnostics is not None
+            else "<p>Detailed screening decisions are unavailable in this older report.</p>"
+        ),
         quality_preserved="Quality preserved"
         if data.hero.get("quality_preserved")
         else "No deployable quality-passing selection",

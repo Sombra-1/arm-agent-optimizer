@@ -143,6 +143,7 @@ class ReportData(FinalModel):
     reproduction_command: str
     artifact_hashes: list[StageArtifactHash]
     limitations: list[str]
+    screening_diagnostics: dict[str, JsonValue] | None = None
 
 
 class BundleManifest(FinalModel):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import subprocess
 import time
 from contextlib import ExitStack, suppress
@@ -25,6 +26,7 @@ from aarchtune.runtime.one_shot import run_one_shot
 from aarchtune.screening.artifacts import ScreeningManifestManager, screening_id
 from aarchtune.screening.capabilities import inspect_llama_bench
 from aarchtune.screening.command import build_bench_command
+from aarchtune.screening.diagnostics import diagnose_screening
 from aarchtune.screening.errors import BenchParseError, ScreeningArtifactError, ScreeningError
 from aarchtune.screening.models import (
     BenchExecutionResult,
@@ -40,6 +42,7 @@ from aarchtune.screening.models import (
 )
 from aarchtune.screening.normalization import normalize_record
 from aarchtune.screening.parser import parse_bench_output
+from aarchtune.screening.report import write_screening_report
 from aarchtune.screening.scenarios import load_scenarios
 from aarchtune.screening.selection import score_signatures, select_candidates
 from aarchtune.screening.signatures import build_signatures
@@ -567,3 +570,11 @@ def run_screening(
                 error_message=str(exc),
             )
         raise
+    finally:
+        try:
+            write_screening_report(diagnose_screening(root), root)
+        except (OSError, ValueError) as exc:
+            logging.getLogger(__name__).warning(
+                "Screening diagnosis could not be written (%s); use screen diagnose to retry",
+                type(exc).__name__,
+            )

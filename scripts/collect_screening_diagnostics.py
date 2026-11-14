@@ -12,6 +12,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from aarchtune.screening.diagnostics import ScreeningDiagnosis, diagnose_screening
+from aarchtune.screening.report import write_screening_report
+
 EXPECTED_FILES = (
     "screening-manifest.json",
     "screening-summary.json",
@@ -512,6 +515,11 @@ def collect_diagnostics(
             "raw_model_responses_included": False,
         },
     )
+    diagnosis = diagnose_screening(screening_dir)
+    sanitized = ScreeningDiagnosis.model_validate_json(
+        json.dumps(redactor.value(diagnosis.model_dump(mode="json")))
+    )
+    write_screening_report(sanitized, destination)
     return destination
 
 
