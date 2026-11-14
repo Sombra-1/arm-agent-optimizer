@@ -40,7 +40,7 @@ def _config(tmp_path: Path, screening: Path, name: str) -> EvaluationConfig:
     ("scenario", "outcome", "exit_code", "selected"),
     [
         ("profile-matrix", SelectionOutcome.CANDIDATE_SELECTED, 0, True),
-        ("fast-quality-regression", SelectionOutcome.CANDIDATE_SELECTED, 0, True),
+        ("fast-quality-regression", None, 0, True),
         ("all-candidates-quality-fail", SelectionOutcome.NO_ELIGIBLE_CANDIDATE, 4, False),
         ("baseline-drift-quality", SelectionOutcome.INVALIDATED_BY_DRIFT, 3, False),
     ],
@@ -50,15 +50,50 @@ def test_evaluation_selection_scenarios_and_artifacts(
     evaluation_screening_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
     scenario: str,
-    outcome: SelectionOutcome,
+    outcome: SelectionOutcome | None,
     exit_code: int,
     selected: bool,
 ) -> None:
     monkeypatch.setenv("FAKE_LLAMA_SCENARIO", scenario)
+    bad_ids: set[str] = set()
+    if scenario == "fast-quality-regression":
+        advanced = [
+            CandidateProfile.model_validate_json(line)
+            for line in (evaluation_screening_dir / "advanced-candidates.jsonl")
+            .read_text()
+            .splitlines()
+            if line
+        ]
+        thread_counts = [
+            item.runtime.threads for item in advanced if item.runtime.threads is not None
+        ]
+        assert thread_counts, "The scenario needs an explicitly threaded candidate"
+        bad_threads = max(thread_counts)
+        monkeypatch.setenv("FAKE_LLAMA_BAD_THREADS", str(bad_threads))
+        bad_ids = {
+            item.id
+            for item in advanced
+            if not item.baseline and item.runtime.threads == bad_threads
+        }
+        assert bad_ids
     result = run_evaluation(_config(tmp_path, evaluation_screening_dir, scenario))
     assert result.exit_code == exit_code
     assert result.selection is not None
-    assert result.selection.outcome is outcome
+    if outcome is None:
+        assert result.selection.outcome in {
+            SelectionOutcome.CANDIDATE_SELECTED,
+            SelectionOutcome.BASELINE_RETAINED,
+        }
+        assert result.selection.selected_candidate_id not in bad_ids
+        decisions = [
+            json.loads(line)
+            for line in (result.output_dir / "quality-decisions.jsonl").read_text().splitlines()
+        ]
+        by_id = {item["candidate_id"]: item for item in decisions}
+        assert all(by_id[candidate]["status"] == "failed" for candidate in bad_ids)
+        assert by_id[result.selection.selected_candidate_id]["status"] == "passed"
+    else:
+        assert result.selection.outcome is outcome
     assert (result.output_dir / "selected-profile.yaml").exists() is selected
     validation = validate_evaluation_directory(result.output_dir)
     assert validation.valid, validation.errors
