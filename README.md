@@ -4,6 +4,10 @@
 
 **Diagnose, benchmark, and tune local GGUF inference with quality gates.**
 
+The 0.2 release is a quality-aware inference diagnostic and optimization beta.
+Native validation establishes conservative decisions and quality preservation;
+it does not establish a runtime-configuration performance gain.
+
 Arm64-native · GGUF/llama.cpp · workload-aware quality gates · reproducible
 evidence · safe candidate selection
 
