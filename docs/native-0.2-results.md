@@ -45,3 +45,25 @@ The next controlled model-only substitution uses the existing pinned
 Qwen2.5-14B Q3_K_M profile with the same support workload, generation contract,
 quality policy, and search limits. Its results must be recorded independently,
 including failure if it cannot pass preflight.
+
+## Run 43615601029: 14B follow-up, incomplete pipeline evidence
+
+[Workflow run](https://github.com/Sombra-1/arm-agent-optimizer/actions/runs/43615601029)
+used commit `fe669fe9361d50e16bc527a93fb47aff6972eecb` and the existing 14B profile,
+with unchanged workload and policy hashes. Model identity and all three single-task
+protocol probes passed; the unknown output mode again returned HTTP 400.
+
+The first optimization call raised `StageError`. The initial experiment harness
+recorded the exception class but did not preserve the failed stage's metadata.
+Consequently, this attempt establishes neither baseline-quality failure nor a
+quality-passing full pipeline. It is recorded as incomplete pipeline evidence,
+not as a performance result. The second planned repetition did not start.
+
+- [14B attempt archive](evidence/aarchtune-0.2-optimization-43615601029-1.zip)
+  ([checksum](evidence/aarchtune-0.2-optimization-43615601029-1.sha256))
+
+The failure-capture correction retains stage state, available baseline quality,
+preflight reports, and existing sanitized screening diagnostics when execution
+raises. A same-input diagnostic replay uses one repetition to identify the
+failure before spending compute on a repeatability run. Response text and
+arbitrary exception messages remain excluded.

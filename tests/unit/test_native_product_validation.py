@@ -125,6 +125,30 @@ def test_repeatability_exposes_changed_quality_and_performance(native: ModuleTyp
     assert result["baseline_p95_relative_range"] == pytest.approx(0.4)
 
 
+def test_failed_stage_capture_keeps_state_without_exception_or_response_text(
+    native: ModuleType, synthetic_run: Path, tmp_path: Path
+) -> None:
+    path = synthetic_run / "optimize-manifest.json"
+    manifest = json.loads(path.read_text())
+    manifest["status"] = "failed"
+    manifest["failure"] = {
+        "stage": "screening",
+        "error_type": "StageError",
+        "message": "PRIVATE_MESSAGE",
+    }
+    path.write_text(json.dumps(manifest))
+    redactor = native.Redactor(((str(tmp_path), "$TEMP"), (str(ROOT), "$WORKSPACE")))
+    result = native.capture_failure(
+        synthetic_run, tmp_path / "public-failure", redactor, ValueError("PRIVATE_MESSAGE")
+    )
+    assert result["stage_state"]["optimize-manifest.json"]["failure"]["stage"] == "screening"
+    assert result["preflight_outcome"] == "quality_passed"
+    assert result["baseline_quality"]["task_attempt_success_rate"] == 1.0
+    assert "PRIVATE_MESSAGE" not in json.dumps(result)
+    assert "response_text" not in json.dumps(result)
+    assert (tmp_path / "public-failure/screening-diagnostics/screening-summary.json").is_file()
+
+
 def test_native_workflow_is_pinned_bounded_and_uses_a_local_environment() -> None:
     workflow_path = ROOT / ".github/workflows/native-arm64-product.yml"
     workflow = yaml.safe_load(workflow_path.read_text())

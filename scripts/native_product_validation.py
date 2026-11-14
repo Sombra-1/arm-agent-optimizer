@@ -7,12 +7,13 @@ import argparse
 import json
 import platform
 import signal
+import traceback
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
 import httpx
-from collect_screening_diagnostics import Redactor
+from collect_screening_diagnostics import Redactor, collect_diagnostics
 
 from aarchtune.baseline.runner import hash_file_streaming
 from aarchtune.benchmark.models import RawAttemptRecord, RequestMeasurement
@@ -250,6 +251,91 @@ def compare_repeats(runs: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def capture_failure(
+    root: Path, public: Path, redactor: Redactor, error: BaseException
+) -> dict[str, Any]:
+    """Retain stage state and typed failure locations without exception/body text."""
+
+    public.mkdir(parents=True, exist_ok=True)
+    state: dict[str, Any] = {"error_chain": [], "stage_state": {}}
+    current: BaseException | None = error
+    while current is not None:
+        state["error_chain"].append(
+            {
+                "type": type(current).__name__,
+                "frames": [
+                    {
+                        "file": redactor.text(frame.filename),
+                        "line": frame.lineno,
+                        "function": frame.name,
+                    }
+                    for frame in traceback.extract_tb(current.__traceback__)
+                ],
+            }
+        )
+        if type(current).__name__ in {
+            "BaselineReferenceError",
+            "ProvenanceMismatchError",
+            "PlanArtifactError",
+            "ScenarioError",
+            "BenchCommandError",
+            "EvaluationInputError",
+        }:
+            # These errors describe planning/benchmark metadata, never completions.
+            state["error_chain"][-1]["metadata_error"] = redactor.text(str(current))
+        current = current.__cause__
+    for relative in (
+        "optimize-manifest.json",
+        "baseline/manifest.json",
+        "screening/screening-manifest.json",
+        "evaluation/evaluation-manifest.json",
+    ):
+        path = root / relative
+        if not path.is_file():
+            continue
+        manifest = read_json(path)
+        state["stage_state"][relative] = {
+            key: manifest.get(key)
+            for key in (
+                "status",
+                "stage",
+                "active_stage",
+                "error_type",
+                "completed_attempt_count",
+                "owned_processes_stopped",
+                "server_stopped",
+                "samplers_stopped",
+                "sampler_stopped",
+                "completed_invocations",
+                "failed_invocations",
+                "summary",
+            )
+            if key in manifest
+        }
+        failure = manifest.get("failure")
+        if isinstance(failure, dict):
+            state["stage_state"][relative]["failure"] = {
+                key: failure.get(key) for key in ("stage", "error_type")
+            }
+    summary_path = root / "baseline/baseline-summary.json"
+    if summary_path.is_file():
+        summary = read_json(summary_path)
+        state["baseline_quality"] = summary["quality"]
+        state["native"] = summary["is_arm64"] and not summary["synthetic_fixture"]
+    preflight_path = root / "preflight/preflight.json"
+    if preflight_path.is_file():
+        report = PreflightReport.model_validate_json(
+            json.dumps(redactor.value(read_json(preflight_path)))
+        )
+        state["preflight_outcome"] = report.outcome
+        write_report(report, public / "preflight")
+    if (root / "screening").is_dir():
+        collect_diagnostics(optimize_dir=root, evidence_dir=public, redactor=redactor)
+    state = redactor.value(state)
+    write_json(public / "failure-state.json", state)
+    return state
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--experiment", choices=["rejection", "optimization"], required=True)
@@ -312,6 +398,7 @@ def main() -> int:
             "source hashes refer to original private artifacts.",
         ],
     }
+    current_root: Path | None = None
     try:
         if args.experiment == "optimization":
             evidence["mode_probes"] = probe_output_modes(args.server, args.model, workload)
@@ -321,6 +408,7 @@ def main() -> int:
         for repetition in range(1, repeats + 1):
             print(f"Starting {args.experiment} run {repetition}/{repeats}", flush=True)
             root = args.output_dir / f"run-{repetition}"
+            current_root = root
             config = OptimizeConfig(
                 server_binary=args.server,
                 bench_binary=args.bench,
@@ -356,6 +444,13 @@ def main() -> int:
     except Exception as exc:
         # Exception messages may contain model text or runtime logs.
         evidence["errors"].append(f"Experiment failed: {type(exc).__name__}")
+        if current_root is not None:
+            try:
+                evidence["failure_state"] = capture_failure(
+                    current_root, args.evidence_dir / "failure", redactor, exc
+                )
+            except Exception as capture_error:
+                evidence["errors"].append(f"Failure capture failed: {type(capture_error).__name__}")
     finally:
         expected_runs = 1 if args.experiment == "rejection" else args.repeats
         evidence["passed"] = len(evidence["runs"]) == expected_runs and not evidence["errors"]
