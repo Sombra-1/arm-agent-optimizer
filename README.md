@@ -8,6 +8,12 @@ The 0.2 release is a quality-aware inference diagnostic and optimization beta.
 Native validation establishes conservative decisions and quality preservation;
 it does not establish a runtime-configuration performance gain.
 
+The separate **0.2.1 development branch** explains screening decisions and coverage
+through `aarchtune screen diagnose`, automatic screening reports, and expanded
+native artifact export. See the [diagnostic guide](docs/screening-diagnostics.md).
+These additions have synthetic-test coverage; their expanded native export has
+not yet been validated by a fresh Arm64 run.
+
 Arm64-native · GGUF/llama.cpp · workload-aware quality gates · reproducible
 evidence · safe candidate selection
 

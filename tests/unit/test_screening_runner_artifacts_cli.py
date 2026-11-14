@@ -11,6 +11,7 @@ from typer.testing import CliRunner
 from aarchtune.baseline.errors import BaselineInputError
 from aarchtune.cli import app
 from aarchtune.screening.capabilities import clear_bench_capability_cache
+from aarchtune.screening.diagnostics import ScreeningDiagnosis
 from aarchtune.screening.errors import BenchDiscoveryError, ScreeningError
 from aarchtune.screening.models import ScreeningConfig, ScreeningStatus
 from aarchtune.screening.runner import run_screening
@@ -76,6 +77,16 @@ def test_healthy_screening_artifacts_and_validation(
         "advanced-candidates.jsonl",
     }
     assert required <= {item.name for item in result.output_dir.iterdir()}
+    diagnosis = ScreeningDiagnosis.model_validate_json(
+        (result.output_dir / "screening-diagnostics.json").read_text()
+    )
+    assert not diagnosis.evidence_errors
+    assert diagnosis.coverage["planned_profiles"] == result.summary.plan_profiles
+    assert diagnosis.coverage["usable_invocation_fraction"] == 1.0
+    assert diagnosis.coverage["workload_completed_profiles"] is None
+    assert len(diagnosis.candidates) == result.summary.plan_profiles
+    assert any(item["shares_signature_with"] for item in diagnosis.candidates)
+    assert (result.output_dir / "screening-report.html").is_file()
     assert not {
         "best-profile.yaml",
         "run-optimized.sh",
@@ -160,6 +171,12 @@ def test_target_row_failure_modes_are_precise(
         "requested prompt=128, generation=0" in str(item["reason"]) for item in matching_failures
     )
     assert all("observed token pairs=" in str(item["reason"]) for item in matching_failures)
+    diagnosis = ScreeningDiagnosis.model_validate_json(
+        (result.output_dir / "screening-diagnostics.json").read_text()
+    )
+    assert any(failure_code in item["failure_codes"] for item in diagnosis.invocations)
+    assert any(failure_code in item["failure_codes"] for item in diagnosis.candidates)
+    assert diagnosis.next_steps
     if fixture_mode != "settings-mismatch":
         assert result.status is ScreeningStatus.FAILED
 
@@ -248,6 +265,19 @@ def test_failure_stability_and_partial_statuses(
     assert result.status is expected_status
     assert result.exit_code == expected_exit
     assert result.summary is not None
+    diagnosis = ScreeningDiagnosis.model_validate_json(
+        (result.output_dir / "screening-diagnostics.json").read_text()
+    )
+    assert diagnosis.status == expected_status.value
+    assert not diagnosis.evidence_errors
+    if scenario == "unstable":
+        assert all(
+            "unstable_measurements" in item["screening_reasons"] for item in diagnosis.candidates
+        )
+        assert any("competing load" in action for action in diagnosis.next_steps)
+    if scenario == "partial-failure":
+        assert any(item["decision"] == "advanced" for item in diagnosis.candidates)
+        assert any("nonzero_exit" in item["failure_codes"] for item in diagnosis.candidates)
     if scenario == "partial-failure":
         assert result.summary.advanced_candidates > 0
         assert result.summary.failed_invocations > 0
@@ -485,6 +515,12 @@ def test_simulated_interruption_updates_manifest_and_returns_three(
     assert manifest["status"] == "interrupted"
     assert manifest["owned_processes_stopped"] is True
     assert manifest["samplers_stopped"] is True
+    diagnosis = ScreeningDiagnosis.model_validate_json(
+        (result.output_dir / "screening-diagnostics.json").read_text()
+    )
+    assert diagnosis.status == "interrupted"
+    assert diagnosis.evidence_errors
+    assert diagnosis.coverage["advanced_profiles"] is None
 
 
 def test_cli_human_json_validation_and_partial_exit(

@@ -1,5 +1,10 @@
 # Low-level candidate screening
 
+The 0.2.1 development branch adds an [offline screening diagnosis](screening-diagnostics.md)
+with per-profile decisions, failure reasons, coverage, and next steps. It also
+exports these details for successful native runs. Eligibility and selection
+rules described below remain unchanged.
+
 `aarchtune screen` uses a local `llama-bench` executable as a bounded technical
 filter between search planning and expensive real-workload evaluation. Screening
 does not run candidate `llama-server` processes and does not evaluate agent output,

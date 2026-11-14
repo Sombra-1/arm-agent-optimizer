@@ -5,6 +5,7 @@
 <section id="selection"><h2>Selection outcome</h2><p>$outcome_title: <strong>$selected_candidate</strong></p><p>$selection_reason</p></section>
 $rejected_card
 <section id="funnel"><h2>Candidate funnel</h2>$funnel_svg</section>
+<section id="screening"><h2>Screening decisions and coverage</h2>$screening_diagnostics</section>
 <section id="comparison"><h2>Baseline versus selected and all candidates</h2><div class="chart"><h3>Sequential requests per minute</h3>$service_svg</div><div class="chart"><h3>P95 latency</h3>$latency_svg</div><div class="chart"><h3>Peak measured RSS</h3>$memory_svg</div></section>
 <section id="quality"><h2>Quality gate and candidate evidence</h2>$quality_distribution_svg<table><thead><tr><th>Candidate</th><th>Execution</th><th>Quality</th><th>Req/min</th><th>P95</th><th>Peak RSS</th><th>Task success</th><th>JSON validity</th></tr></thead><tbody>$candidate_rows</tbody></table><h3>Selected profile quality by category</h3><table><thead><tr><th>Category</th><th>Passed</th><th>Failed</th><th>Rate</th></tr></thead><tbody>$category_quality_rows</tbody></table><h3>Selected profile quality by validator</h3><table><thead><tr><th>Validator</th><th>Passed</th><th>Failed</th><th>Rate</th></tr></thead><tbody>$validator_quality_rows</tbody></table></section>
 <section id="pareto"><h2>Pareto frontier</h2>$pareto_svg<p>Only completed, comparable, quality-passing real-workload candidates with all core metrics are plotted.</p></section>
