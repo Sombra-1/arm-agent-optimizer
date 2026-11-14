@@ -49,6 +49,8 @@ def optimize_command(
     response_format: Annotated[
         ResponseFormatMode, typer.Option("--response-format")
     ] = ResponseFormatMode.NONE,
+    context_size: Annotated[int | None, typer.Option("--context-size", min=1)] = None,
+    parallel_slots: Annotated[int | None, typer.Option("--parallel-slots", min=1)] = None,
     advance_count: Annotated[int, typer.Option("--advance-count", min=1, max=24)] = 6,
     max_profiles: Annotated[int | None, typer.Option("--max-profiles", min=1, max=64)] = None,
     screening_repetitions: Annotated[
@@ -104,6 +106,8 @@ def optimize_command(
         evaluation_repetitions=evaluation_repetitions,
         warmup_requests=warmup_requests,
         response_format_mode=response_format,
+        context_size=context_size,
+        parallel_slots=parallel_slots,
         advance_count=advance_count,
         max_profiles=max_profiles,
         screening_repetitions=screening_repetitions,

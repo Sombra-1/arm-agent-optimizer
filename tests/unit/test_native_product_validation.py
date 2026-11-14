@@ -154,7 +154,7 @@ def test_native_workflow_is_pinned_bounded_and_uses_a_local_environment() -> Non
     workflow = yaml.safe_load(workflow_path.read_text())
     job = workflow["jobs"]["experiment"]
     assert job["runs-on"] == "ubuntu-24.04-arm"
-    assert job["timeout-minutes"] == 90
+    assert job["timeout-minutes"] == 120
     assert job["strategy"]["fail-fast"] is False
     assert len(job["env"]["LLAMA_COMMIT"]) == 40
     assert "rejection" in job["strategy"]["matrix"]["experiment"]

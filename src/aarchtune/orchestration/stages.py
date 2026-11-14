@@ -75,6 +75,8 @@ def run_baseline_stage(
         repetitions=config.baseline_repetitions,
         warmup_requests=config.warmup_requests,
         response_format_mode=config.response_format_mode,
+        context_size=config.context_size,
+        parallel_slots=config.parallel_slots,
         request_timeout_seconds=config.request_timeout_seconds,
         startup_timeout_seconds=config.startup_timeout_seconds,
         sample_interval_seconds=config.sample_interval_seconds,

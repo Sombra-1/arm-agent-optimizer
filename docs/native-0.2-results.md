@@ -73,3 +73,29 @@ remained in model transfer beyond a complete 20-minute request window and was
 replaced before inference. It establishes no additional quality or performance
 result. The download retry now resumes partial transfers, detects sustained low
 transfer speed, and still requires the exact immutable model size and SHA-256.
+
+## Run 43619596239: quality-passing 14B baseline, rejected search baseline
+
+[Diagnostic replay](https://github.com/Sombra-1/arm-agent-optimizer/actions/runs/43619596239)
+on commit `e7dc3cb5487197dba8661cd16aec1497a7fc54a1` captured the missing stage state:
+
+- The 14B baseline passed **10/10 tasks and 70/70 validators**, with valid JSON,
+  valid schemas, successful requests, and no timeouts.
+- Preflight passed the unchanged quality policy.
+- Planning rejected the required baseline at `generate_candidates`; screening
+  and finalization did not run. The original generic error covered both
+  compatibility and memory-guardrail rejection, so the artifact alone does not
+  establish which condition applied.
+- Baseline server and sampler cleanup was confirmed.
+
+This establishes a quality-passing native model/workload pairing, not a completed
+optimization or performance improvement.
+
+- [Diagnostic replay archive](evidence/aarchtune-0.2-optimization-43619596239-1.zip)
+  ([checksum](evidence/aarchtune-0.2-optimization-43619596239-1.sha256))
+
+The follow-up makes planning errors identify unsupported flags or memory pressure
+with measured RSS and available-memory values, without bypassing either guard.
+It also exposes explicit baseline context/slot controls and runs the same bounded
+workload with a 2,048-token context and one serving slot. That changed server
+configuration is recorded separately; previous failures remain evidence.

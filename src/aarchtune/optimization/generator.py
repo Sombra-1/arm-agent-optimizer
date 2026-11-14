@@ -560,6 +560,7 @@ def generate_candidates(
             unique[digest] = draft
 
     profiles: list[CandidateProfile] = []
+    baseline_diagnostic: CandidateProfile | None = None
     used_ids: set[str] = set()
     for digest, draft in unique.items():
         candidate_id = profile_id(draft.label, draft.runtime, baseline=draft.baseline)
@@ -582,6 +583,8 @@ def generate_candidates(
             compatibility=compatibility,
             resource_estimate=resource,
         )
+        if profile.baseline:
+            baseline_diagnostic = profile
         if not compatibility.compatible or resource.classification is MemoryRiskClass.HIGH_RISK:
             reason_code = (
                 "unsupported_configuration"
@@ -608,6 +611,22 @@ def generate_candidates(
 
     profiles.sort(key=lambda candidate: (not candidate.baseline, candidate.stage, candidate.id))
     if not any(candidate.baseline for candidate in profiles):
+        if baseline_diagnostic is not None:
+            if not baseline_diagnostic.compatibility.compatible:
+                detail = "unsupported flags: " + ", ".join(
+                    baseline_diagnostic.compatibility.unsupported_flags
+                )
+            else:
+                detail = (
+                    "memory_guardrail_high_risk: "
+                    + baseline_diagnostic.resource_estimate.reason
+                    + f" (model_file_bytes={plan_input.model.size_bytes}, "
+                    + f"available_bytes={plan_input.hardware.available_memory_bytes}, "
+                    + f"baseline_peak_rss_bytes={plan_input.baseline_peak_rss_bytes}). "
+                    + "Reduce context or parallel slots, use a smaller model, "
+                    + "or provide more memory."
+                )
+            raise PlanningError("The baseline configuration cannot enter the search: " + detail)
         raise PlanningError(
             "The baseline configuration cannot be represented by the inspected runtime; "
             "no executable search plan can preserve the required baseline"

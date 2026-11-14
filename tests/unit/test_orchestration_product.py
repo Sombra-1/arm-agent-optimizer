@@ -507,7 +507,13 @@ def test_schema_contract_survives_full_pipeline(
     )
     output = tmp_path / "schema-optimization"
     result = run_optimization(
-        _config(output, workload=workload, response_format_mode=ResponseFormatMode.JSON_SCHEMA)
+        _config(
+            output,
+            workload=workload,
+            response_format_mode=ResponseFormatMode.JSON_SCHEMA,
+            context_size=2048,
+            parallel_slots=1,
+        )
     )
     assert result.exit_code == 0
     assert validate_optimization(output).valid
@@ -518,4 +524,8 @@ def test_schema_contract_survives_full_pipeline(
     assert all(
         item["runtime"]["response_format_mode"] == "json_schema" for item in plan["candidates"]
     )
+    assert all(item["runtime"]["context_size"] == 2048 for item in plan["candidates"])
+    command = json.loads((output / "baseline/server-command.json").read_text())["data"]["command"]
+    assert command["requested_settings"]["context_size"] == 2048
+    assert command["requested_settings"]["parallel_slots"] == 1
     assert "Request output mode: json_schema" in (output / "final/run-optimized.sh").read_text()

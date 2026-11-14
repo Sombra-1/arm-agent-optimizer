@@ -266,6 +266,22 @@ def test_incompatible_baseline_fails_instead_of_disappearing(
         )
 
 
+def test_memory_rejected_baseline_reports_headroom_without_bypassing_guard(
+    fake_binary: Path, fake_model: Path, server_capabilities: ServerCapabilities
+) -> None:
+    plan_input = _input(fake_binary, fake_model, available_memory=4 * 1024**3, peak_rss=4 * 1024**3)
+    with pytest.raises(PlanningError, match="memory_guardrail_high_risk") as error:
+        generate_candidates(
+            plan_input,
+            server_capabilities,
+            load_search_space().configuration,
+            OptimizationGoal.LATENCY,
+            8,
+        )
+    assert "available_bytes=4294967296" in str(error.value)
+    assert "baseline_peak_rss_bytes=4294967296" in str(error.value)
+
+
 def test_diversity_limit_preserves_baseline_and_dimension_extremes(
     fake_binary: Path, fake_model: Path, server_capabilities: ServerCapabilities
 ) -> None:

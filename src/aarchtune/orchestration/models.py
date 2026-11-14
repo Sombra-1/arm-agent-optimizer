@@ -57,6 +57,8 @@ class OptimizeConfig(OrchestrationModel):
     evaluation_repetitions: Annotated[int, Field(ge=1, le=100)] = 3
     warmup_requests: Annotated[int, Field(ge=0, le=100)] = 1
     response_format_mode: ResponseFormatMode = ResponseFormatMode.NONE
+    context_size: Annotated[int, Field(ge=1, le=1_048_576)] | None = None
+    parallel_slots: Annotated[int, Field(ge=1, le=1024)] | None = None
     advance_count: Annotated[int, Field(ge=1, le=24)] = 6
     max_profiles: Annotated[int, Field(ge=1, le=64)] | None = None
     screening_repetitions: Annotated[int, Field(ge=1, le=20)] = 3

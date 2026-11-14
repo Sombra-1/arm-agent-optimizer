@@ -94,6 +94,8 @@ def probe_output_modes(binary: Path, model: Path, workload_path: Path) -> dict[s
         model_path=model,
         startup_timeout_seconds=120.0,
         request_timeout_seconds=90.0,
+        context_size=2048,
+        parallel_slots=1,
     )
     capabilities = inspect_llama_server_capabilities(binary)
     with LlamaServerProcess(config, capabilities) as server:
@@ -275,6 +277,7 @@ def capture_failure(
         )
         if type(current).__name__ in {
             "BaselineReferenceError",
+            "PlanningError",
             "ProvenanceMismatchError",
             "PlanArtifactError",
             "ScenarioError",
@@ -322,6 +325,13 @@ def capture_failure(
         summary = read_json(summary_path)
         state["baseline_quality"] = summary["quality"]
         state["native"] = summary["is_arm64"] and not summary["synthetic_fixture"]
+        state["baseline_process"] = summary["process"]
+    hardware_path = root / "hardware/hardware.json"
+    if hardware_path.is_file():
+        state["hardware"] = read_json(hardware_path)
+    command_path = root / "baseline/server-command.json"
+    if command_path.is_file():
+        state["baseline_command"] = read_json(command_path)
     preflight_path = root / "preflight/preflight.json"
     if preflight_path.is_file():
         report = PreflightReport.model_validate_json(
@@ -389,6 +399,8 @@ def main() -> int:
         "quality_policy_sha256": load_quality_policy(None).sha256,
         "server_sha256": hash_file_streaming(args.server),
         "bench_sha256": hash_file_streaming(args.bench),
+        "baseline_context_size": 2048 if args.experiment == "optimization" else None,
+        "baseline_parallel_slots": 1 if args.experiment == "optimization" else None,
         "runs": [],
         "errors": [],
         "limitations": [
@@ -417,15 +429,17 @@ def main() -> int:
                 output_dir=root,
                 goal=OptimizationGoal.LATENCY,
                 response_format_mode=mode,
+                context_size=2048 if args.experiment == "optimization" else None,
+                parallel_slots=1 if args.experiment == "optimization" else None,
                 baseline_repetitions=2,
-                evaluation_repetitions=3,
+                evaluation_repetitions=2,
                 screening_scenarios=ROOT / "configs/native-product-screening.yaml",
-                advance_count=4,
-                max_profiles=8,
+                advance_count=2,
+                max_profiles=4,
                 screening_repetitions=3,
                 request_timeout_seconds=90.0,
                 startup_timeout_seconds=120.0,
-                maximum_total_duration_seconds=1800.0,
+                maximum_total_duration_seconds=2700.0,
             )
             run = run_optimization(config)
             result = summarize_run(root, redactor, args.evidence_dir / f"run-{repetition}")

@@ -38,12 +38,26 @@ same JSON Schema contract throughout; every measured request is checked against
 its task's temperature, seed, token limit, streaming setting, output mode, and
 generation schema.
 
-The default quality policy is unchanged. Baseline measurement uses two
-repetitions and candidate evaluation uses three. Each search is bounded to eight
-planned profiles, four advanced profiles, and 30 minutes total. Screening uses
+The default quality policy is unchanged. The initial attempts used two baseline
+repetitions, three evaluation repetitions, eight planned profiles, four advanced
+profiles, and a 30-minute search deadline. Screening uses
 the fixed, short prefill/decode scenarios in `configs/native-product-screening.yaml`.
-Both hosted jobs have a 90-minute timeout. Experiment A runs once; B runs twice
+Hosted jobs have a 120-minute timeout. Experiment A runs once; B runs twice
 by default on the same runner. All attempts and outcomes are retained in order.
+
+The bounded-context follow-up explicitly sets B's baseline to a 2,048-token
+context and one serving slot. This is recorded as a separate configuration
+experiment from the original runtime-default attempts. The workload, expected
+answers, JSON Schema contract, and quality policy are unchanged. The CLI exposes
+the same baseline controls through `optimize --context-size --parallel-slots`;
+the planner keeps its existing memory guardrails and holds context fixed across
+the default search space.
+
+For this first full-pipeline CPU validation, the bounded-context follow-up uses
+four planned profiles, two advanced profiles, and two evaluation repetitions
+(the unchanged policy minimum), with a 45-minute search deadline. This limits
+14B inference cost while retaining independent quality validation and baseline
+drift checks. It is a small validation search, not an exhaustive tuning study.
 
 If B's baseline fails, the search stops and the experiment fails its full-pipeline
 acceptance criterion. If a passing baseline is retained, the experiment may pass
