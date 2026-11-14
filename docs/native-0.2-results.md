@@ -3,6 +3,11 @@
 These are measured results from native GitHub-hosted Arm64, kept separately from
 the original hackathon evidence. No quality policy or workload answer was changed.
 
+The 0.2 native milestones now include early quality rejection and one verified
+full-pipeline comparison with a quality-passing baseline. The comparison retained
+the baseline; **no runtime-configuration speedup is established**. An unchanged
+repeat is running separately; repeatability is not yet established.
+
 ## Run 43614303062: rejection and first optimization-model preflight
 
 [Workflow run](https://github.com/Sombra-1/arm-agent-optimizer/actions/runs/43614303062)
@@ -99,3 +104,68 @@ with measured RSS and available-memory values, without bypassing either guard.
 It also exposes explicit baseline context/slot controls and runs the same bounded
 workload with a 2,048-token context and one serving slot. That changed server
 configuration is recorded separately; previous failures remain evidence.
+
+## Run 43622255530: verified full pipeline, baseline retained
+
+[Bounded-context run](https://github.com/Sombra-1/arm-agent-optimizer/actions/runs/43622255530)
+used commit `5cbd233f9bb2409e9d82cb689daf3616f7c04630`, the same pinned 14B model,
+runtime, support-triage workload, generation contract, and quality policy. The
+explicit baseline configuration was a 2,048-token context and one serving slot.
+Hardware provenance records native AArch64, four Neoverse-N2 cores, and about
+15.6 GiB total RAM. The controlled experiment took about 33 minutes including
+protocol probes.
+
+All six stages completed: doctor, baseline/preflight, planning, screening,
+evaluation, and finalization. Optimization evidence, the original final bundle,
+and its Optimization Passport passed verification before public projection.
+Process and sampler cleanup was confirmed. The request audit passed for all
+50 measured workload requests across the initial baseline, start/end drift
+sentinels, and the two evaluated configurations. Every audited request retained
+the same JSON Schema, output mode, temperature, seed, and token limit.
+
+The initial baseline passed 10/10 tasks and 70/70 validators. Both evaluated
+configurations also passed 10/10 tasks with 100% JSON validity and validator
+success. No quality gate was weakened. Start/end baseline drift was classified
+stable: median latency moved about 0.56%, P95 about 0.49%, and all recorded
+quality metrics were unchanged.
+
+| Evaluated configuration | Median latency | P95 latency | Sequential requests/min | Peak RSS | Quality |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Baseline, retained | 13.831 s | 14.581 s | 4.379 | 11,267,907,584 bytes | passed |
+| `latency-p1-c2048-cache` | 13.893 s | 14.665 s | 4.361 | 11,267,895,296 bytes | passed |
+
+Selection returned `baseline_retained_no_meaningful_improvement`, exit 0. The
+alternative's measured P95 was about 0.58% slower than the evaluated baseline.
+The report's approximately 1.06% P95 improvement field compares the selected
+baseline with its fresh start sentinel; it is repeated-baseline variation, not
+a gain from a changed configuration, and is below the unchanged 2% threshold.
+The subsequent report correction omits configuration-improvement deltas when
+the baseline is retained and explains the selection reason in the HTML. It also
+suppresses this claim when rendering older report-data files. The original ZIP
+and its originally rendered report remain immutable evidence of this attempt.
+The correction passed the full local release checks with 560 tests, including
+retained-baseline, rejected-selection, drift-invalid, and selected-alternative
+report regressions. It also rendered this native run's actual report data without
+claiming a configuration improvement.
+
+The funnel contains four planned profiles, three low-level signatures, and two
+advanced/evaluated profiles. Screening ended with `partial` status. The public
+projection retains this status, aggregate funnel, and original source hashes,
+but not individual screening exclusion/error reasons. This run therefore does
+not establish complete successful coverage of every planned screening attempt.
+
+All three single-task output-mode probes passed, and the unknown format returned
+HTTP 400. Full-workload quality evidence here is for `json_schema` only. This is
+a bounded hosted-runner validation, not an exhaustive search, a concurrent-load
+benchmark, or a production performance guarantee.
+
+- [Full-pipeline archive](evidence/aarchtune-0.2-optimization-43622255530-1.zip)
+  ([checksum](evidence/aarchtune-0.2-optimization-43622255530-1.sha256))
+- Artifact ID: `14126395481`; original ZIP SHA-256:
+  `34854cd551621e146187926c3b1b494e02939f663560f00f9cc939e14cf88ce0`.
+- [Python 3.11/3.12 CI](https://github.com/Sombra-1/arm-agent-optimizer/actions/runs/43622255201)
+  passed for the exact source commit; local release checks passed with 555 tests.
+
+[Run 43638354390](https://github.com/Sombra-1/arm-agent-optimizer/actions/runs/43638354390)
+repeats the same source and inputs on a separate hosted runner. Its result will
+be recorded independently before making any repeatability claim.

@@ -21,8 +21,11 @@ The starter routes five support tickets, including an ambiguous request and a
 negated data-loss case. Each task checks ticket ID, queue, priority, JSON shape,
 request success, and forbidden content. It is a small, realistic starting point;
 add representative tasks before using its results for your own application.
-Its validators are tested with synthetic correct and incorrect answers. Native
-GGUF quality and performance have **not** been demonstrated for this workload.
+Its validators are tested with synthetic correct and incorrect answers. A pinned
+14B GGUF pairing also passed native quality and completed a bounded optimization
+comparison that retained the baseline. The tested 7B pairing failed semantic
+checks despite valid JSON Schema output. See the [native results](native-0.2-results.md);
+these results do not establish that an arbitrary model will pass your workload.
 
 Edit three independent parts of a task:
 
@@ -111,7 +114,12 @@ requests. Comparisons therefore retain the same generation contract. For a
 selected constrained profile, clients must continue sending the recorded output
 mode and per-task schema: launching the server alone does not enforce them.
 
-## Native evidence still required
+## Native validation and performance claims
+
+The 0.2 native experiments establish early rejection and a verified, quality-passing
+full-pipeline comparison. That comparison retained the baseline and establishes
+no configuration speedup. Independent repetition remains pending; see the
+[measured results and evidence](native-0.2-results.md).
 
 On native Linux Arm64, use the prepared script with an already available local
 model and binaries:
@@ -130,5 +138,4 @@ Before publishing a performance claim, retain the model/runtime/workload hashes,
 native hardware report, complete repeated quality evidence, baseline drift checks,
 and selected candidate's measured improvements under the unchanged policy.
 `baseline_retained` and `no_eligible_candidate` remain legitimate outcomes. A
-quality-passing native optimization comparison is an outstanding milestone, not
-a result established by the synthetic tests or this development branch.
+quality-passing comparison alone does not establish a performance improvement.

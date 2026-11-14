@@ -16,14 +16,14 @@ checks a baseline, explains failures, and exports a diagnostic report even when
 tuning cannot proceed. `optimize` now stops before searching if that baseline
 fails. Optional JSON Schema generation preserves the same output contract through
 candidate evaluation. See the [preflight guide](docs/preflight.md) for setup,
-starter workload creation, and the outstanding native demonstration milestone.
+starter workload creation, and [measured 0.2 native results](docs/native-0.2-results.md).
 
-> **Strongest validated result:** AArchTune completed a real 132-execution
-> native Arm64 optimization workflow and correctly retained no candidate
-> because none satisfied the unchanged quality policy.
+> **0.2 native result:** Preflight rejected the original poor-quality baseline
+> before search. A separate quality-passing 14B support-triage run completed all
+> six stages and produced a verified `baseline_retained` result.
 
-That `no_eligible_candidate` outcome is the product working as designed—not a
-performance win and not a crashed optimization.
+Both evaluated configurations passed every quality check, but no alternative
+met the unchanged 2% improvement threshold. No runtime speedup is claimed.
 
 ## The problem
 
@@ -61,7 +61,7 @@ hardware-aware workflow: equivalent low-level signatures are deduplicated,
 expensive candidates are filtered before real-workload evaluation, and quality
 plus drift must pass before ranking.
 
-The native workflow measured this funnel directly: 132 screening executions
+The original smoke workflow measured this funnel directly: 132 screening executions
 completed, producing 11 distinct low-level signatures, and four profiles
 advanced to real-workload evaluation. All four failed the unchanged quality
 policy, so AArchTune emitted `no_eligible_candidate` instead of an unsafe
@@ -162,7 +162,25 @@ Neoverse-N2 cores, CPU inference, `n_gpu_layers=0`, and pinned llama.cpp
 `b10106` at commit
 `1425386fd996511e1f3295e7366c38289a92a271`.
 
-### Full native optimization smoke
+### 0.2 product validation
+
+[Run 43614303062](https://github.com/Sombra-1/arm-agent-optimizer/actions/runs/43614303062)
+reproduced the original 1.5B quality failure and stopped before planning or
+screening. [Run 43622255530](https://github.com/Sombra-1/arm-agent-optimizer/actions/runs/43622255530)
+completed the full pipeline with Qwen2.5-14B Q3_K_M, the support-triage workload,
+JSON Schema output, a 2,048-token context, and one serving slot.
+
+The baseline and cache candidate each passed all ten evaluated task attempts.
+Their P95 latencies were 14.581 s and 14.665 s respectively. The baseline was
+retained; drift checks, request-generation audit, final bundle, Passport, and
+cleanup verification passed. Screening finished with partial status: four
+planned profiles became three low-level signatures and two evaluated profiles.
+
+These are bounded native validation results, not evidence of a tuning speedup.
+An unchanged repeat is pending. See [all attempts, limitations, and permanent
+evidence](docs/native-0.2-results.md).
+
+### Original native optimization smoke
 
 [Run 30119492016](https://github.com/Sombra-1/arm-agent-optimizer/actions/runs/30119492016)
 completed the real pipeline:
@@ -252,8 +270,8 @@ See [security](docs/security.md), [runtime safety](docs/runtime-safety.md), and
 ## Current limitations
 
 - Native results come from an ephemeral shared runner, not a dedicated benchmark host.
-- The completed native optimization is one smoke run, not repeatability proof.
-- Tested Qwen models did not satisfy the workload quality policy.
+- The 0.2 full-pipeline comparison has one successful run; repeatability is pending.
+- The original smoke workload failed quality; the 14B support-triage pairing passed.
 - Mistral quality could not be measured because the hosted runner was lost.
 - KleidiAI build integration is proven; the tested Q4_K tensors had no
   KleidiAI kernel, and no end-to-end runtime speedup is claimed.

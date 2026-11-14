@@ -1,11 +1,27 @@
 # Preserved native Arm64 evidence
 
 This directory permanently preserves the reviewed, sanitized evidence from the
-completed native Arm64 optimization smoke. The ZIP is an immutable copy of the
-original GitHub Actions artifact download. It is retained here because Actions
-artifact retention was temporary.
+native Arm64 experiments. Each ZIP is an immutable copy of its original GitHub
+Actions artifact download, retained because Actions artifact retention is temporary.
 
-## Original artifact
+## 0.2 product validation
+
+The [0.2 results record](../native-0.2-results.md) links every retained attempt,
+including quality rejections, incomplete pipeline evidence, and the verified
+full-pipeline `baseline_retained` result. The corresponding `aarchtune-0.2-*.zip`
+files each have a matching `.sha256` file. Public projections exclude generated
+responses; original bundles and Passports were verified before projection.
+The projections are not canonical bundles and cannot replace their validators.
+
+For example, verify the full-pipeline artifact from the repository root:
+
+```bash
+cd docs/evidence
+sha256sum -c aarchtune-0.2-optimization-43622255530-1.sha256
+unzip -t aarchtune-0.2-optimization-43622255530-1.zip
+```
+
+## Original 0.1 artifact
 
 | Field | Value |
 | --- | --- |

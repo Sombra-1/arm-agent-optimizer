@@ -15,6 +15,10 @@ from aarchtune.finalization.models import OptimizationPassport, ParetoFrontier, 
 
 def _improvements(context: FinalizationContext) -> dict[str, JsonValue]:
     selected = context.selection.selected_candidate_id
+    if selected == context.selection.baseline_candidate_id:
+        # A baseline replay can move relative to the start sentinel without
+        # establishing a gain from a changed runtime configuration.
+        return {}
     comparison = next((item for item in context.comparisons if item.candidate_id == selected), None)
     return cast(
         dict[str, JsonValue],

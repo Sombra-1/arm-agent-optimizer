@@ -1,8 +1,8 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AArchTune Optimization Report</title><style>$css</style></head>
-<body>$synthetic_banner<header class="hero"><p class="eyebrow">AArchTune</p><h1>$outcome_title</h1><p class="promise">Automatically selected a fast, reliable configuration for this recorded AI workload.</p><h2>$selected_candidate</h2><div class="metrics"><strong>$service_improvement service rate</strong><strong>$p95_improvement P95 latency</strong><strong>$memory_improvement peak memory</strong><strong>$quality_preserved</strong></div><p>Evaluation <code>$evaluation_id</code> · Passport <code>$passport_id</code></p></header>
+<body>$synthetic_banner<header class="hero"><p class="eyebrow">AArchTune</p><h1>$outcome_title</h1><p class="promise">$outcome_summary</p><h2>$selected_candidate</h2><div class="metrics">$performance_metrics<strong>$quality_preserved</strong></div><p>Evaluation <code>$evaluation_id</code> · Passport <code>$passport_id</code></p></header>
 <main>
-<section id="selection"><h2>Selection outcome</h2><p>$outcome_title: <strong>$selected_candidate</strong></p></section>
+<section id="selection"><h2>Selection outcome</h2><p>$outcome_title: <strong>$selected_candidate</strong></p><p>$selection_reason</p></section>
 $rejected_card
 <section id="funnel"><h2>Candidate funnel</h2>$funnel_svg</section>
 <section id="comparison"><h2>Baseline versus selected and all candidates</h2><div class="chart"><h3>Sequential requests per minute</h3>$service_svg</div><div class="chart"><h3>P95 latency</h3>$latency_svg</div><div class="chart"><h3>Peak measured RSS</h3>$memory_svg</div></section>
