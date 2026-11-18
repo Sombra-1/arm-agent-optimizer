@@ -65,9 +65,10 @@ def measure_task_attempt(
             max_tokens=task.generation.max_tokens,
             seed=task.generation.seed,
             response_format_mode=client.response_format_mode,
-            response_format_applied=(client.response_format_mode.value == "json_object"),
-            response_format_type=(
-                "json_object" if client.response_format_mode.value == "json_object" else None
+            response_format_applied=client.response_format_mode.response_type is not None,
+            response_format_type=client.response_format_mode.response_type,
+            response_format_schema=(
+                task.output_schema if client.response_format_mode.value == "json_schema" else None
             ),
         ),
         execution=execution,

@@ -218,6 +218,30 @@ def render_report(data: ReportData) -> str:
         if data.outcome == "evaluation_invalidated_by_drift"
         else "Candidate selected"
     )
+    outcome_summary = {
+        "baseline_retained": (
+            "Retain the baseline; no configuration achieved a meaningful improvement."
+        ),
+        "no_eligible_candidate": "No configuration passed the requirements for deployment.",
+        "evaluation_invalidated_by_drift": (
+            "Drift invalidated the comparison; repeat evaluation before deployment."
+        ),
+    }.get(data.outcome, "Selected a quality-passing configuration for this recorded workload.")
+    if (
+        data.outcome == "candidate_selected"
+        and data.selected_candidate_id is not None
+        and data.selected_candidate_id != data.baseline_candidate_id
+    ):
+        performance_metrics = (
+            f"<strong>{_change(improvements.get('requests_per_minute'))} service rate</strong>"
+            f"<strong>{_change(improvements.get('p95_latency_seconds'), lower_is_better=True)}"
+            " P95 latency</strong>"
+            f"<strong>{_change(improvements.get('measured_peak_rss_bytes'), lower_is_better=True)}"
+            " peak memory</strong>"
+        )
+    else:
+        # Also handles older report-data files that contain baseline replay deltas.
+        performance_metrics = "<strong>No configuration improvement established</strong>"
     selected_settings = "".join(
         f"<tr><th>{html.escape(key)}</th><td>{html.escape(str(value))}</td></tr>"
         for key, value in (data.selected_settings or {}).items()
@@ -231,12 +255,10 @@ def render_report(data: ReportData) -> str:
         css=css,
         synthetic_banner=synthetic,
         outcome_title=html.escape(outcome_title),
+        outcome_summary=html.escape(outcome_summary),
+        selection_reason=html.escape(str(data.hero.get("selection_reason", ""))),
         selected_candidate=html.escape(selected),
-        service_improvement=_change(improvements.get("requests_per_minute")),
-        p95_improvement=_change(improvements.get("p95_latency_seconds"), lower_is_better=True),
-        memory_improvement=_change(
-            improvements.get("measured_peak_rss_bytes"), lower_is_better=True
-        ),
+        performance_metrics=performance_metrics,
         quality_preserved="Quality preserved"
         if data.hero.get("quality_preserved")
         else "No deployable quality-passing selection",

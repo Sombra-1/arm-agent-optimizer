@@ -5,10 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from aarchtune.baseline.runner import hash_file_streaming
+from aarchtune.errors import AArchTuneError
+from aarchtune.evaluation.quality_policy import load_quality_policy
 from aarchtune.evaluation.validation import validate_evaluation_directory
 from aarchtune.finalization.validation import validate_bundle
 from aarchtune.optimization.artifacts import validate_plan_directory
 from aarchtune.orchestration.models import (
+    OptimizeConfig,
     OptimizeManifest,
     OptimizeStage,
     OptimizeStageStatus,
@@ -17,6 +20,8 @@ from aarchtune.orchestration.models import (
 from aarchtune.orchestration.resume import PIPELINE
 from aarchtune.orchestration.runner import DIRECTORIES, PRIMARY
 from aarchtune.orchestration.stages import validate_baseline
+from aarchtune.preflight.diagnostics import diagnose_baseline
+from aarchtune.preflight.models import PreflightReport
 from aarchtune.screening.validation import validate_screening_directory
 
 
@@ -34,7 +39,25 @@ def validate_optimization(path: Path) -> OptimizeValidationResult:
     if manifest.status not in {OptimizeStageStatus.COMPLETED, OptimizeStageStatus.PARTIAL}:
         errors.append("Optimize manifest is not in a valid terminal state")
     references = {item.stage: item for item in manifest.stages}
-    for stage in PIPELINE:
+    blocked = False
+    preflight_path = root / "preflight/preflight.json"
+    if manifest.status is OptimizeStageStatus.PARTIAL and preflight_path.is_file():
+        try:
+            report = PreflightReport.model_validate_json(preflight_path.read_bytes())
+            config = OptimizeConfig.model_validate_json(
+                (root / "optimize-config.json").read_bytes()
+            )
+            expected = diagnose_baseline(
+                root / "baseline", load_quality_policy(config.quality_policy)
+            )
+            if report != expected:
+                errors.append("Preflight report differs from baseline and policy evidence")
+            blocked = not expected.can_tune
+            if blocked and set(references) != {OptimizeStage.DOCTOR, OptimizeStage.BASELINE}:
+                errors.append("Blocked optimization has unexpected stage references")
+        except (AArchTuneError, OSError, ValueError) as exc:
+            errors.append(f"Invalid preflight report: {exc}")
+    for stage in PIPELINE[:2] if blocked else PIPELINE:
         reference = references.get(stage)
         if reference is None or reference.status is not OptimizeStageStatus.COMPLETED:
             errors.append(f"Required stage reference is absent or incomplete: {stage.value}")
@@ -62,6 +85,8 @@ def validate_optimization(path: Path) -> OptimizeValidationResult:
     if any(root.rglob(".*.tmp")):
         errors.append("Temporary incomplete artifacts remain")
     synthetic = False
+    if blocked:
+        synthetic = report.synthetic
     final_manifest = root / DIRECTORIES[OptimizeStage.FINALIZATION] / "bundle-manifest.json"
     if final_manifest.is_file():
         import json

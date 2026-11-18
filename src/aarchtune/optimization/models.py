@@ -12,11 +12,14 @@ from pydantic import (
     ConfigDict,
     Field,
     JsonValue,
+    SerializerFunctionWrapHandler,
     field_validator,
+    model_serializer,
     model_validator,
 )
 
 from aarchtune.models import CPUFeatures
+from aarchtune.runtime.config import ResponseFormatMode
 
 
 class OptimizationModel(BaseModel):
@@ -76,8 +79,17 @@ class ProfileRuntime(OptimizationModel):
     parallel_slots: int | None = None
     prompt_cache: bool = False
     mmap: bool = True
+    response_format_mode: ResponseFormatMode = ResponseFormatMode.NONE
     numa_mode: Literal["disabled", "distribute", "isolate", "numactl"] = "disabled"
     cpu_affinity_policy: Literal["none", "compact", "spread"] = "none"
+
+    @model_serializer(mode="wrap")
+    def serialize_runtime(self, handler: SerializerFunctionWrapHandler) -> dict[str, object]:
+        payload: dict[str, object] = handler(self)
+        # Preserve canonical hashes of 0.1 profiles that predate this optional field.
+        if self.response_format_mode is ResponseFormatMode.NONE:
+            payload.pop("response_format_mode", None)
+        return payload
 
     @model_validator(mode="after")
     def validate_relationships(self) -> ProfileRuntime:

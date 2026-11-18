@@ -315,7 +315,17 @@ def run_evaluation(
                     "Sequential service rate is not multi-client concurrency throughput.",
                     "Non-streaming requests do not expose client-measured TTFT.",
                     "Model-file page caching and deterministic ordering can introduce bias.",
-                ],
+                ]
+                + (
+                    [
+                        "Clients must preserve response_format="
+                        f"{selected_result.profile.runtime.response_format_mode.value} "
+                        "and the workload output_schema on each request. The server launch command "
+                        "does not enforce request-level constraints."
+                    ]
+                    if selected_result.profile.runtime.response_format_mode.value != "none"
+                    else []
+                ),
                 scope_statement=(
                     "This profile is specific to the recorded hardware, runtime binary, model, "
                     "workload, and evaluation settings."

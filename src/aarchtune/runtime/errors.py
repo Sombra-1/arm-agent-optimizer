@@ -56,10 +56,10 @@ class ProcessStartError(RuntimeManagementError):
 class ResponseFormatUnsupportedError(RuntimeManagementError):
     """The server rejected an explicitly requested response format."""
 
-    def __init__(self, status_code: int) -> None:
+    def __init__(self, status_code: int, response_format: str = "json_object") -> None:
         self.status_code = status_code
         super().__init__(
-            "response_format_unsupported: llama-server rejected the json_object "
+            f"response_format_unsupported: llama-server rejected the {response_format} "
             f"response format with HTTP {status_code}"
         )
 

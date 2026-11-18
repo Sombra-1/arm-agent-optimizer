@@ -152,6 +152,7 @@ def execute_candidate(
         parallel_slots=runtime.parallel_slots,
         prompt_cache=runtime.prompt_cache,
         mmap=runtime.mmap,
+        response_format_mode=runtime.response_format_mode,
         request_timeout_seconds=config.request_timeout_seconds,
         startup_timeout_seconds=config.startup_timeout_seconds,
         shutdown_timeout_seconds=config.shutdown_timeout_seconds,

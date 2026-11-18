@@ -12,7 +12,7 @@ from pydantic import ValidationError
 from aarchtune.evaluation.errors import QualityPolicyError
 from aarchtune.evaluation.models import QualityPolicy, QualityPolicySource
 
-DEFAULT_POLICY_PATH = Path(__file__).resolve().parents[3] / "configs/default-quality-policy.yaml"
+DEFAULT_POLICY_PATH = Path(__file__).resolve().parents[1] / "data/default-quality-policy.yaml"
 
 
 def load_quality_policy(path: Path | None) -> QualityPolicySource:

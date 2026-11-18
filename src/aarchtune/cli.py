@@ -20,6 +20,7 @@ from aarchtune.logging_config import configure_logging
 from aarchtune.models import HardwareReport
 from aarchtune.optimization.cli import plan_app
 from aarchtune.orchestration.cli import optimize_app
+from aarchtune.preflight.cli import preflight
 from aarchtune.runtime.cli import runtime_app
 from aarchtune.screening.cli import screen_app
 from aarchtune.workload.cli import workload_app
@@ -40,6 +41,7 @@ app.add_typer(optimize_app)
 app.add_typer(finalize_app)
 app.add_typer(passport_app)
 app.command()(baseline)
+app.command()(preflight)
 
 
 def _version_callback(value: bool) -> None:

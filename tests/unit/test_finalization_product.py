@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -11,11 +12,18 @@ import yaml
 from typer.testing import CliRunner
 
 from aarchtune.cli import app
-from aarchtune.evaluation.models import EvaluationConfig
+from aarchtune.evaluation.models import EvaluationConfig, SelectionOutcome
 from aarchtune.evaluation.runner import run_evaluation
-from aarchtune.finalization.models import FinalizeConfig, OptimizationPassport, ReportData
+from aarchtune.finalization.context import load_finalization_context
+from aarchtune.finalization.models import (
+    FinalizeConfig,
+    OptimizationPassport,
+    ParetoFrontier,
+    ReportData,
+)
 from aarchtune.finalization.passport import _envelope_data, canonical_hash, verify_passport
 from aarchtune.finalization.report import render_report
+from aarchtune.finalization.report_data import create_report_data
 from aarchtune.finalization.runner import finalize_evaluation
 from aarchtune.finalization.validation import validate_bundle
 from aarchtune.optimization.models import OptimizationGoal
@@ -258,6 +266,70 @@ def test_report_rendering_is_deterministic(final_bundle: Path) -> None:
     assert render_report(data) == render_report(data)
     assert "Selected profile quality by category" in render_report(data)
     assert "Selected profile quality by validator" in render_report(data)
+
+
+def test_retained_baseline_has_no_configuration_improvement(
+    selected_evaluation: Path, final_bundle: Path
+) -> None:
+    context = load_finalization_context(selected_evaluation, allow_synthetic=True)
+    retained = context.selection.model_copy(
+        update={
+            "outcome": SelectionOutcome.BASELINE_RETAINED,
+            "selected_candidate_id": context.selection.baseline_candidate_id,
+        }
+    )
+    data = create_report_data(
+        replace(context, selection=retained),
+        OptimizationPassport.model_validate_json(
+            (final_bundle / "optimization-passport.json").read_text()
+        ),
+        ParetoFrontier.model_validate_json((final_bundle / "pareto-frontier.json").read_text()),
+    )
+    assert data.hero["improvements"] == {}
+    assert data.candidates  # Actual measurements remain available for comparison.
+
+
+@pytest.mark.parametrize(
+    ("outcome", "explanation"),
+    [
+        ("baseline_retained", "Retain the baseline"),
+        ("no_eligible_candidate", "No configuration passed the requirements"),
+        ("evaluation_invalidated_by_drift", "Drift invalidated the comparison"),
+        ("candidate_selected", "Selected a quality-passing configuration"),
+    ],
+)
+def test_report_hero_only_claims_gains_for_a_selected_alternative(
+    final_bundle: Path, outcome: str, explanation: str
+) -> None:
+    data = ReportData.model_validate_json((final_bundle / "report-data.json").read_text())
+    alternative = next(str(item["id"]) for item in data.candidates if not item["baseline"])
+    data.outcome = outcome
+    data.selected_candidate_id = (
+        alternative
+        if outcome == "candidate_selected"
+        else data.baseline_candidate_id
+        if outcome == "baseline_retained"
+        else None
+    )
+    # Older native reports include positive baseline-replay deltas. Rendering
+    # those files must not present a tuning gain for a retained baseline.
+    data.hero["improvements"] = {
+        "requests_per_minute": 0.123,
+        "p95_latency_seconds": 0.123,
+        "measured_peak_rss_bytes": 0.123,
+    }
+    data.hero["selection_reason"] = "Reason with <untrusted> text"
+    report = render_report(data)
+    hero = report.split("</header>", 1)[0]
+    assert explanation in hero
+    assert "Reason with &lt;untrusted&gt; text" in report
+    if outcome == "candidate_selected":
+        assert "+12.3% service rate" in hero
+        assert "-12.3% P95 latency" in hero
+    else:
+        assert "No configuration improvement established" in hero
+        assert "12.3%" not in hero
+    assert "Candidate P95 latency" in report
 
 
 def test_run_and_reproduction_scripts_use_safe_arrays(final_bundle: Path) -> None:

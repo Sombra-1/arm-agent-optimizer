@@ -24,6 +24,7 @@ _SCREENABLE = {
     "numa_mode": "numa_mode",
 }
 _UNSCREENABLE_REASONS = {
+    "response_format_mode": "Chat response constraints are preserved for workload evaluation",
     "backend_label": "Backend label is provenance; this run uses one inspected bench binary",
     "binary_path": "Server binary path is not a llama-bench option",
     "context_size": "Context capacity is not used as a low-level scenario dimension",
@@ -66,6 +67,9 @@ def build_signatures(
         settings_data: dict[str, Any] = {}
         incompatibilities: list[str] = []
         runtime_data = candidate.runtime.model_dump(mode="python", exclude={"schema_version"})
+        # The default mode is omitted from canonical profile serialization for
+        # historical hashes, but every field still needs an explicit mapping.
+        runtime_data["response_format_mode"] = candidate.runtime.response_format_mode.value
         for field, value in runtime_data.items():
             if field in _SCREENABLE:
                 capability_name = _SCREENABLE[field]

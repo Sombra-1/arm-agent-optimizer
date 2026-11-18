@@ -102,7 +102,7 @@ class ExecutionProvenance(BaselineModel):
     measured_repetitions: int
     response_format_mode: ResponseFormatMode = ResponseFormatMode.NONE
     response_format_applied: bool = False
-    response_format_type: Literal["json_object"] | None = None
+    response_format_type: Literal["json_object", "json_schema"] | None = None
     request_timeout_seconds: float
     startup_timeout_seconds: float
     process_sampling_interval_seconds: float

@@ -27,6 +27,30 @@ workload_app = typer.Typer(
 console = Console()
 
 
+@workload_app.command("init")
+def init_workload(
+    output: Annotated[Path, typer.Option("--output", "-o", help="New workload JSONL path.")],
+) -> None:
+    """Create an editable support-ticket workload with separate generation and scoring contracts."""
+
+    template = Path(__file__).resolve().parents[1] / "data/support-triage.jsonl"
+    try:
+        output = output.expanduser()
+        output.parent.mkdir(parents=True, exist_ok=True)
+        with output.open("x", encoding="utf-8") as destination:
+            destination.write(template.read_text(encoding="utf-8"))
+    except OSError as exc:
+        typer.echo(f"Error: could not create workload: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"Created {output}")
+    typer.echo(
+        "Edit messages for your tasks, output_schema for allowed output, "
+        "and validators for scoring."
+    )
+    typer.echo("Keep expected answers in validators. Add representative cases before benchmarking.")
+    typer.echo("Next: aarchtune workload validate WORKLOAD, then aarchtune preflight --help.")
+
+
 def _write_output(path: Path, payload: str) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)

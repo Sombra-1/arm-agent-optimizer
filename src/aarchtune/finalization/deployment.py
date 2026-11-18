@@ -108,6 +108,8 @@ set -euo pipefail
 # Hardware fingerprint: {hardware_hash}
 # Binary SHA-256: {profile.runtime_binary_hash}
 # Model SHA-256: {profile.model_hash}
+# Request output mode: {profile.runtime_settings.get("response_format_mode", "none")}
+# Preserve each workload output_schema in client requests when using json_schema.
 
 binary={shlex.quote(binary)}
 model={shlex.quote(model)}

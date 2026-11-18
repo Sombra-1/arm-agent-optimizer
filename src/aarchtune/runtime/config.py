@@ -19,6 +19,13 @@ class ResponseFormatMode(StrEnum):
 
     NONE = "none"
     JSON_OBJECT = "json_object"
+    JSON_SCHEMA = "json_schema"
+
+    @property
+    def response_type(self) -> Literal["json_object", "json_schema"] | None:
+        if self is ResponseFormatMode.NONE:
+            return None
+        return "json_schema" if self is ResponseFormatMode.JSON_SCHEMA else "json_object"
 
 
 class LlamaServerConfig(BaseModel):

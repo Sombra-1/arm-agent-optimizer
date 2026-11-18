@@ -10,7 +10,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, JsonValue
 
 from aarchtune.runtime.config import ResponseFormatMode
-from aarchtune.runtime.errors import ResponseFormatUnsupportedError
+from aarchtune.runtime.errors import ResponseFormatUnsupportedError, RuntimeManagementError
 from aarchtune.workload.schema import ResponseInput, WorkloadTask
 
 
@@ -186,6 +186,15 @@ class LlamaServerClient:
         }
         if self.response_format_mode is ResponseFormatMode.JSON_OBJECT:
             payload["response_format"] = {"type": "json_object"}
+        elif self.response_format_mode is ResponseFormatMode.JSON_SCHEMA:
+            if task.output_schema is None:
+                raise RuntimeManagementError(
+                    f"json_schema mode requires an explicit output_schema for task {task.id!r}"
+                )
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {"name": "workload_output", "schema": task.output_schema},
+            }
         result = self._request(
             "POST",
             "/v1/chat/completions",
@@ -194,11 +203,13 @@ class LlamaServerClient:
             require_json=True,
         )
         if not result.succeeded:
-            if (
-                self.response_format_mode is ResponseFormatMode.JSON_OBJECT
-                and result.status_code in {400, 422}
-            ):
-                raise ResponseFormatUnsupportedError(result.status_code)
+            if self.response_format_mode is not ResponseFormatMode.NONE and result.status_code in {
+                400,
+                422,
+            }:
+                raise ResponseFormatUnsupportedError(
+                    result.status_code, self.response_format_mode.value
+                )
             return ChatCompletionResult(
                 response=ResponseInput(
                     task_id=task.id,

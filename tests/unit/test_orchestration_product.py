@@ -23,6 +23,7 @@ from aarchtune.orchestration.models import (
 from aarchtune.orchestration.runner import run_optimization
 from aarchtune.orchestration.stages import validate_baseline
 from aarchtune.orchestration.validation import validate_optimization
+from aarchtune.runtime.config import ResponseFormatMode
 
 REPOSITORY = Path(__file__).resolve().parents[2]
 cli = CliRunner()
@@ -453,3 +454,78 @@ def test_stage_adapters_surface_native_execution_failures(
         stages.run_finalization_stage(
             config, tmp_path / "finalization-failure", tmp_path / "evaluation"
         )
+
+
+def test_failed_baseline_stops_search_and_resume_keeps_diagnosis(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from aarchtune.orchestration import runner
+
+    monkeypatch.setenv("FAKE_LLAMA_SCENARIO", "mixed-task-quality")
+
+    def unexpected(*args: object, **kwargs: object) -> None:
+        pytest.fail("Search must not run when baseline quality fails")
+
+    monkeypatch.setattr(runner, "run_screening_stage", unexpected)
+    output = tmp_path / "blocked"
+    result = run_optimization(_config(output))
+    assert result.outcome == "baseline_quality_failed" and result.exit_code == 4
+    assert result.selected_profile_id is None and result.final_dir is None
+    assert (output / "preflight/report.html").is_file()
+    assert not (output / "plan").exists() and not (output / "screening").exists()
+    report = json.loads((output / "preflight/preflight.json").read_text())
+    assert any("incorrect_value" in task["failures"] for task in report["tasks"])
+    validation = validate_optimization(output)
+    assert validation.valid, validation.errors
+    assert "Synthetic" in validation.warnings[0]
+    monkeypatch.setattr(runner, "run_baseline_stage", unexpected)
+    resumed = run_optimization(_config(output, resume=True))
+    assert resumed.outcome == result.outcome and resumed.exit_code == result.exit_code
+    assert resumed.reused_stages == [OptimizeStage.DOCTOR, OptimizeStage.BASELINE]
+    report["can_tune"] = True
+    (output / "preflight/preflight.json").write_text(json.dumps(report))
+    assert not validate_optimization(output).valid
+
+
+def test_schema_contract_survives_full_pipeline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from aarchtune.workload.loader import load_workload
+
+    monkeypatch.setenv("FAKE_LLAMA_SCENARIO", "profile-matrix")
+    monkeypatch.setenv("FAKE_LLAMA_BENCH_SCENARIO", "healthy-jsonl")
+    tasks = load_workload(REPOSITORY / "workloads/smoke-test.jsonl").tasks
+    workload = tmp_path / "schema-workload.jsonl"
+    workload.write_text(
+        "\n".join(
+            json.dumps(
+                {**task.model_dump(mode="json", by_alias=True), "output_schema": {"type": "object"}}
+            )
+            for task in tasks
+        )
+        + "\n"
+    )
+    output = tmp_path / "schema-optimization"
+    result = run_optimization(
+        _config(
+            output,
+            workload=workload,
+            response_format_mode=ResponseFormatMode.JSON_SCHEMA,
+            context_size=2048,
+            parallel_slots=1,
+        )
+    )
+    assert result.exit_code == 0
+    assert validate_optimization(output).valid
+    for summary_path in (output / "evaluation").rglob("baseline-summary.json"):
+        summary = json.loads(summary_path.read_text())
+        assert summary["execution"]["response_format_type"] == "json_schema"
+    plan = json.loads((output / "plan/search-plan.json").read_text())
+    assert all(
+        item["runtime"]["response_format_mode"] == "json_schema" for item in plan["candidates"]
+    )
+    assert all(item["runtime"]["context_size"] == 2048 for item in plan["candidates"])
+    command = json.loads((output / "baseline/server-command.json").read_text())["data"]["command"]
+    assert command["requested_settings"]["context_size"] == 2048
+    assert command["requested_settings"]["parallel_slots"] == 1
+    assert "Request output mode: json_schema" in (output / "final/run-optimized.sh").read_text()

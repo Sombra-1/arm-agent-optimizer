@@ -11,6 +11,25 @@ on:
         options:
           - preflight
           - smoke
+          - product-validation
+      product_repeats:
+        description: Independent full searches on the same hosted Arm runner
+        required: true
+        default: "2"
+        type: choice
+        options: ["1", "2"]
+      product_experiment:
+        description: Product experiment to run
+        required: true
+        default: both
+        type: choice
+        options: [both, rejection, optimization]
+      product_model:
+        description: Immutable model profile for the optimization experiment
+        required: true
+        default: qwen2.5-7b-q3-k-m
+        type: choice
+        options: [qwen2.5-7b-q3-k-m, qwen2.5-14b-q3-k-m]
 
 permissions:
   contents: read
@@ -21,6 +40,7 @@ concurrency:
 
 jobs:
   native-arm64:
+    if: inputs.mode != 'product-validation'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 120
     env:
@@ -764,3 +784,11 @@ jobs:
         run: |
           set -euo pipefail
           exit "${OPTIMIZE_EXIT:-1}"
+
+  product-validation:
+    if: inputs.mode == 'product-validation'
+    uses: ./.github/workflows/native-arm64-product.yml
+    with:
+      repeats: ${{ inputs.product_repeats || '2' }}
+      experiment: ${{ inputs.product_experiment || 'both' }}
+      model_profile: ${{ inputs.product_model || 'qwen2.5-7b-q3-k-m' }}

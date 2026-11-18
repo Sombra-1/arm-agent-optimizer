@@ -13,6 +13,7 @@ from aarchtune.baseline.models import (
 )
 from aarchtune.baseline.runner import run_baseline
 from aarchtune.evaluation.models import EvaluationConfig
+from aarchtune.evaluation.quality_policy import load_quality_policy
 from aarchtune.evaluation.runner import run_evaluation
 from aarchtune.evaluation.validation import validate_evaluation_directory
 from aarchtune.finalization.models import FinalizeConfig
@@ -20,8 +21,10 @@ from aarchtune.finalization.runner import finalize_evaluation
 from aarchtune.finalization.validation import validate_bundle
 from aarchtune.optimization.artifacts import validate_plan_directory
 from aarchtune.optimization.planner import create_search_plan
-from aarchtune.orchestration.errors import StageError
+from aarchtune.orchestration.errors import PreflightBlockedError, StageError
 from aarchtune.orchestration.models import OptimizeConfig
+from aarchtune.preflight.diagnostics import diagnose_baseline
+from aarchtune.preflight.report import write_report
 from aarchtune.screening.models import ScreeningConfig
 from aarchtune.screening.runner import run_screening
 from aarchtune.screening.validation import validate_screening_directory
@@ -71,6 +74,9 @@ def run_baseline_stage(
         output_dir=path,
         repetitions=config.baseline_repetitions,
         warmup_requests=config.warmup_requests,
+        response_format_mode=config.response_format_mode,
+        context_size=config.context_size,
+        parallel_slots=config.parallel_slots,
         request_timeout_seconds=config.request_timeout_seconds,
         startup_timeout_seconds=config.startup_timeout_seconds,
         sample_interval_seconds=config.sample_interval_seconds,
@@ -95,6 +101,10 @@ def run_baseline_stage(
 
 
 def run_planning_stage(config: OptimizeConfig, path: Path, baseline: Path) -> None:
+    report = diagnose_baseline(baseline, load_quality_policy(config.quality_policy))
+    write_report(report, config.output_dir / "preflight")
+    if not report.can_tune:
+        raise PreflightBlockedError(report.outcome)
     create_search_plan(
         goal=config.goal,
         output_dir=path,

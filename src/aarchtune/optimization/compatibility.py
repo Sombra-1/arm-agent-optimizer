@@ -35,6 +35,7 @@ from aarchtune.runtime.capabilities import (
     inspect_llama_server_capabilities,
 )
 from aarchtune.runtime.command import CommandBuildResult
+from aarchtune.runtime.config import ResponseFormatMode
 from aarchtune.workload.loader import load_workload, summarize_workload
 from aarchtune.workload.schema import WorkloadValidationSummary
 
@@ -168,6 +169,7 @@ def _runtime_from_command(
         parallel_slots=integer("parallel_slots"),
         prompt_cache=settings.get("prompt_cache") is True,
         mmap=settings.get("mmap") is not False,
+        response_format_mode=ResponseFormatMode(str(settings.get("response_format_mode", "none"))),
         numa_mode=cast(Any, numa),
         cpu_affinity_policy="none",
     )
@@ -394,6 +396,20 @@ def load_baseline_input(
     )
     backend = "KleidiAI" if current_runtime.kleidiai_status == "verified" else "llama.cpp"
     baseline_runtime = _runtime_from_command(command, binary_path.resolve(), backend)
+    execution = summary_data.get("execution")
+    summary_mode = execution.get("response_format_mode") if isinstance(execution, dict) else None
+    command_mode = command.requested_settings.get("response_format_mode")
+    if summary_mode is not None and command_mode is not None and summary_mode != command_mode:
+        raise BaselineReferenceError(
+            "Baseline response-format provenance disagrees with command settings"
+        )
+    try:
+        mode = ResponseFormatMode(
+            str(summary_mode if summary_mode is not None else command_mode or "none")
+        )
+    except ValueError as exc:
+        raise BaselineReferenceError("Unsupported baseline response-format mode") from exc
+    baseline_runtime = baseline_runtime.model_copy(update={"response_format_mode": mode})
     process_data = summary_data.get("process")
     peak_data = (
         process_data.get("measured_phase_peak_rss_bytes")

@@ -191,4 +191,4 @@ def test_unknown_response_format_mode_is_rejected(
     config_factory: Callable[..., LlamaServerConfig],
 ) -> None:
     with pytest.raises(ValueError, match="response_format_mode"):
-        config_factory(response_format_mode="json_schema")
+        config_factory(response_format_mode="unsupported_format")

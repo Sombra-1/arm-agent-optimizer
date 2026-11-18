@@ -128,6 +128,7 @@ def build_llama_server_command(
         "metrics_enabled": config.metrics_enabled,
         "prompt_cache": config.prompt_cache,
         "mmap": config.mmap,
+        "response_format_mode": config.response_format_mode.value,
         "numa_mode": config.numa_mode,
         "extra_environment": cast(JsonValue, redact_environment(config.extra_environment)),
     }

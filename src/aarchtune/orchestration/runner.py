@@ -15,7 +15,12 @@ from aarchtune.finalization.models import BundleManifest
 from aarchtune.hardware.detector import detect_hardware
 from aarchtune.orchestration.artifacts import OptimizeManifestManager
 from aarchtune.orchestration.config import configuration_hash, input_fingerprint
-from aarchtune.orchestration.errors import OrchestrationError, ResumeError, StageError
+from aarchtune.orchestration.errors import (
+    OrchestrationError,
+    PreflightBlockedError,
+    ResumeError,
+    StageError,
+)
 from aarchtune.orchestration.models import (
     OptimizeConfig,
     OptimizeFailure,
@@ -246,6 +251,25 @@ def run_optimization(config: OptimizeConfig) -> OptimizeRunResult:
             outcome=final.selection_outcome,
             selected_profile_id=final.selected_profile_id,
             final_dir=root / "final",
+            resumed=resolved.resume,
+            reused_stages=reused,
+        )
+    except PreflightBlockedError as exc:
+        manager.update(
+            status=OptimizeStageStatus.PARTIAL,
+            active_stage=OptimizeStage.PARTIAL,
+            owned_processes_stopped=True,
+            samplers_stopped=True,
+            failure=None,
+        )
+        return OptimizeRunResult(
+            optimize_id=manager.manifest.optimize_id,
+            output_dir=root,
+            status=OptimizeStageStatus.PARTIAL,
+            exit_code=4 if exc.outcome == "quality_failed" else 3,
+            outcome=f"baseline_{exc.outcome}",
+            selected_profile_id=None,
+            final_dir=None,
             resumed=resolved.resume,
             reused_stages=reused,
         )

@@ -14,6 +14,11 @@ from aarchtune.orchestration.models import OptimizeConfig
 
 def configuration_hash(config: OptimizeConfig) -> str:
     value = config.model_dump(mode="json", exclude={"overwrite", "resume"})
+    if config.response_format_mode.value == "none":
+        value.pop("response_format_mode", None)
+    for name in ("context_size", "parallel_slots"):
+        if value[name] is None:
+            value.pop(name)
     payload = json.dumps(value, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode()).hexdigest()
 

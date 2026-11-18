@@ -1,10 +1,12 @@
 # AArchTune
 
-**Arm Create 2026 · Cloud AI Track**
-
 [![CI](https://github.com/Sombra-1/arm-agent-optimizer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Sombra-1/arm-agent-optimizer/actions/workflows/ci.yml)
 
-**Quality-gated GGUF optimization for native Arm64.**
+**Diagnose, benchmark, and tune local GGUF inference with quality gates.**
+
+The 0.2 release is a quality-aware inference diagnostic and optimization beta.
+Native validation establishes conservative decisions and quality preservation;
+it does not establish a runtime-configuration performance gain.
 
 Arm64-native · GGUF/llama.cpp · workload-aware quality gates · reproducible
 evidence · safe candidate selection
@@ -13,12 +15,19 @@ AArchTune searches CPU inference configurations, measures real workload
 behavior, verifies evidence and provenance, and recommends a result only when
 performance and correctness both pass.
 
-> **Strongest validated result:** AArchTune completed a real 132-execution
-> native Arm64 optimization workflow and correctly retained no candidate
-> because none satisfied the unchanged quality policy.
+The **0.2 development branch** starts with model quality: `aarchtune preflight`
+checks a baseline, explains failures, and exports a diagnostic report even when
+tuning cannot proceed. `optimize` now stops before searching if that baseline
+fails. Optional JSON Schema generation preserves the same output contract through
+candidate evaluation. See the [preflight guide](docs/preflight.md) for setup,
+starter workload creation, and [measured 0.2 native results](docs/native-0.2-results.md).
 
-That `no_eligible_candidate` outcome is the product working as designed—not a
-performance win and not a crashed optimization.
+> **0.2 native result:** Preflight rejected the original poor-quality baseline
+> before search. Two quality-passing 14B support-triage runs completed all
+> six stages and produced verified `baseline_retained` results.
+
+Both evaluated configurations passed every quality check, but no alternative
+met the unchanged 2% improvement threshold. No runtime speedup is claimed.
 
 ## The problem
 
@@ -37,6 +46,8 @@ It refuses to convert faster-but-wrong measurements into a recommendation.
 
 - Detects Arm64 hardware, topology, memory, CPU capabilities, and runtime flags.
 - Measures a fixed real-workload baseline.
+- Diagnoses baseline quality and blocks expensive tuning when evidence or correctness fails.
+- Supports explicit per-task JSON Schema output while retaining independent validators.
 - Generates a deterministic, bounded, hardware-aware candidate plan.
 - Deduplicates low-level benchmark signatures before expensive evaluation.
 - Runs advanced candidates through isolated `llama-server` processes.
@@ -54,7 +65,7 @@ hardware-aware workflow: equivalent low-level signatures are deduplicated,
 expensive candidates are filtered before real-workload evaluation, and quality
 plus drift must pass before ranking.
 
-The native workflow measured this funnel directly: 132 screening executions
+The original smoke workflow measured this funnel directly: 132 screening executions
 completed, producing 11 distinct low-level signatures, and four profiles
 advanced to real-workload evaluation. All four failed the unchanged quality
 policy, so AArchTune emitted `no_eligible_candidate` instead of an unsafe
@@ -87,7 +98,9 @@ hardware.
 flowchart TD
     H[Hardware detection] --> R[Runtime discovery]
     R --> B[Baseline execution]
-    B --> C[Candidate generation]
+    B --> F{Baseline preflight}
+    F -- quality or evidence failed --> Z[Diagnostic report; retain current configuration]
+    F -- quality passed --> C[Candidate generation]
     C --> S[Screening]
     S --> N[Native measurement]
     N --> V[Quality validators]
@@ -153,7 +166,27 @@ Neoverse-N2 cores, CPU inference, `n_gpu_layers=0`, and pinned llama.cpp
 `b10106` at commit
 `1425386fd996511e1f3295e7366c38289a92a271`.
 
-### Full native optimization smoke
+### 0.2 product validation
+
+[Run 43614303062](https://github.com/Sombra-1/arm-agent-optimizer/actions/runs/43614303062)
+reproduced the original 1.5B quality failure and stopped before planning or
+screening. [Run 43622255530](https://github.com/Sombra-1/arm-agent-optimizer/actions/runs/43622255530)
+completed the full pipeline with Qwen2.5-14B Q3_K_M, the support-triage workload,
+JSON Schema output, a 2,048-token context, and one serving slot.
+
+The baseline and cache candidate each passed all ten evaluated task attempts.
+Their P95 latencies were 14.581 s and 14.665 s respectively. The baseline was
+retained; drift checks, request-generation audit, final bundle, Passport, and
+cleanup verification passed. Screening finished with partial status: four
+planned profiles became three low-level signatures and two evaluated profiles.
+
+An [unchanged repeat](https://github.com/Sombra-1/arm-agent-optimizer/actions/runs/43638354390)
+produced the same evaluated profiles, passing quality decisions, and retained
+baseline. Evaluated-baseline P95 differed by about 0.40% between runs. These are
+two bounded native validations, not a tuning speedup or statistical confidence.
+See [all attempts, limitations, and permanent evidence](docs/native-0.2-results.md).
+
+### Original native optimization smoke
 
 [Run 30119492016](https://github.com/Sombra-1/arm-agent-optimizer/actions/runs/30119492016)
 completed the real pipeline:
@@ -243,8 +276,8 @@ See [security](docs/security.md), [runtime safety](docs/runtime-safety.md), and
 ## Current limitations
 
 - Native results come from an ephemeral shared runner, not a dedicated benchmark host.
-- The completed native optimization is one smoke run, not repeatability proof.
-- Tested Qwen models did not satisfy the workload quality policy.
+- Two 0.2 searches repeated quality and retention decisions; broader repeatability remains unproven.
+- The original smoke workload failed quality; the 14B support-triage pairing passed.
 - Mistral quality could not be measured because the hosted runner was lost.
 - KleidiAI build integration is proven; the tested Q4_K tensors had no
   KleidiAI kernel, and no end-to-end runtime speedup is claimed.
@@ -273,12 +306,14 @@ Requirements: Python 3.11+, Linux CPU inference, a readable GGUF model, and
 compatible `llama-server`/`llama-bench` binaries for real optimization.
 
 ```bash
-python -m venv .venv
+scripts/setup.sh
 source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e '.[dev]'
 aarchtune --version
 ```
+
+Use `scripts/setup.sh --dev` to include test and lint tools. This sets up the
+Python CLI in the project environment; real inference still requires your local
+GGUF and llama.cpp binaries.
 
 ## CLI examples
 
@@ -292,6 +327,16 @@ Validate the workload:
 
 ```bash
 aarchtune workload validate workloads/smoke-test.jsonl --json
+```
+
+Create a starter workload and assess baseline quality:
+
+```bash
+aarchtune workload init --output my-workload.jsonl
+aarchtune preflight \
+  --binary LLAMA_SERVER --model MODEL_GGUF \
+  --workload my-workload.jsonl --response-format json_schema \
+  --output-dir results/preflight
 ```
 
 Run the full pipeline on an authorized local model:
@@ -330,14 +375,16 @@ ruff format --check .
 mypy src
 ```
 
-The release suite contains 518 automated tests with 90% aggregate coverage.
+The automated suite covers runtime management, workload validation, preflight
+diagnostics, candidate selection, artifact integrity, and workflow behavior.
 Normal CI validates Python 3.11 and 3.12. Synthetic fixtures are explicitly
 labelled and are product-behavior evidence, never native performance evidence.
 
 ## Submission status
 
-Experimental work is frozen. No full-performance recommendation or unsupported
-speedup claim is published. The final project and demo video are published on
+The original hackathon experiments remain frozen as historical evidence.
+No full-performance recommendation or unsupported speedup claim is published.
+The original project and demo video are published on
 [Devpost](https://devpost.com/software/aarchtune), and the video is also
 available directly on [YouTube](https://youtu.be/RemP5SKa0RM).
 
